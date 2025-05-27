@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OCR to PDF</title>
+</head>
+<body>
+    <h1>📄 OCR → PDF</h1>
+    <h2>Завантаж зображення</h2>
+    <form action="/upload/" method="post" enctype="multipart/form-data">
+        <input type="file" name="file" accept="image/*" required />
+        <button type="submit">Створити PDF</button>
+    </form>
+
+    <h2>Або введи текст</h2>
+    <form action="/text/" method="post">
+        <textarea name="text" rows="10" cols="50" placeholder="Введи текст тут..."></textarea><br>
+        <button type="submit">Створити PDF з тексту</button>
+    </form>
+</body>
+</html>
