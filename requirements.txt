@@ -4,3 +4,4 @@ pytesseract
 fpdf
 Pillow
 jinja2
+python-multipart
