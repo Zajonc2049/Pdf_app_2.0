@@ -9,11 +9,13 @@ import tempfile
 from app.ocr_utils import process_image_to_pdf, create_text_pdf
 
 app = FastAPI()
-import os
 
+# Підключаємо статику, якщо є папка static
 if os.path.isdir("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
-    templates = Jinja2Templates(directory="templates")
+
+# Підключаємо шаблони Jinja2 (завжди, незалежно від наявності папки static)
+templates = Jinja2Templates(directory="templates")
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
