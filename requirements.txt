@@ -1,7 +1,7 @@
 fastapi
-uvicorn
-pytesseract
-fpdf
-Pillow
-jinja2
+uvicorn[standard]
 python-multipart
+jinja2
+python-ocr-або-ваша-ocr-бібліотека
+pillow
+reportlab
