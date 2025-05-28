@@ -3,10 +3,10 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
-
 import os
 import tempfile
-from app.ocr_utils import process_image_to_pdf, create_text_pdf
+import uvicorn
+from ocr_utils import process_image_to_pdf, create_text_pdf
 
 app = FastAPI()
 
@@ -27,11 +27,24 @@ async def upload_file(file: UploadFile = File(...)):
         contents = await file.read()
         tmp.write(contents)
         tmp_path = tmp.name
-
+    
     pdf_path = await process_image_to_pdf(tmp_path)
+    
+    # Очищуємо тимчасовий файл
+    os.unlink(tmp_path)
+    
     return FileResponse(pdf_path, media_type='application/pdf', filename="ocr_result.pdf")
 
 @app.post("/text/")
 async def text_to_pdf(text: str = Form(...)):
     pdf_path = await create_text_pdf(text)
     return FileResponse(pdf_path, media_type='application/pdf', filename="text_to_pdf.pdf")
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
+if __name__ == "__main__":
+    # Отримуємо порт з змінної середовища (Render автоматично встановлює PORT)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
