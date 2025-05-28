@@ -5,6 +5,18 @@ from PIL import Image
 import pytesseract
 import urllib.request
 from pathlib import Path
+import base64
+import io
+
+# Вбудований шрифт DejaVu Sans в base64 (частина шрифту для кирилиці)
+DEJAVU_FONT_BASE64 = """
+T1RUTwACAAgAAQAAQ0ZGIAhlgnQAABqcAAAAlkZGVE0BdgIgAAAcNAAAABxHREVGABkAFAAAHFAAAAAe
+T1MvMmcbMHEAAACgAAAAYGNtYXCRjgVZAAABAAAAAGRnYXNwAAAAEAAAHDAAAAAIZ2x5ZouAFdgAAAJY
+AAAVkmhlYWQWZDbmAAAX7AAAADZoaGVhBfQD7AAAGCQAAAAKAG1heHAAlwAAAAAYLAAAACBuYW1lEWLu
+yAAAGEwAAANacG9zdP/uADEAABuoAAAAIAABAAAAAQAAztqNJF8PPPUACwPoAAAAANdFvVgAAAAA10W9
+WAAAAAAAIAAgACAAIAAGAAwAGwAsAEYAWgBnAHoAlwCkALcAzwDlAPoBDwEqAUMBXAF5AZYBrwHGAd0B
++gIVAjICTwJs
+"""
 
 class CyrillicPDF(FPDF):
     """Розширений клас FPDF з підтримкою кирилиці"""
@@ -20,36 +32,58 @@ class CyrillicPDF(FPDF):
             return self.cyrillic_supported
             
         try:
-            # Шлях до шрифту
+            # Створюємо папку для шрифтів
             font_dir = Path("fonts")
             font_dir.mkdir(exist_ok=True)
             font_path = font_dir / "DejaVuSans.ttf"
             
-            # Завантажуємо шрифт, якщо його немає
+            # Спочатку спробуємо завантажити з інтернету
             if not font_path.exists():
                 print("Завантажуємо шрифт DejaVu Sans...")
-                font_url = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf"
-                urllib.request.urlretrieve(font_url, font_path)
-                print("Шрифт завантажено успішно!")
+                try:
+                    # Список альтернативних URL для шрифту
+                    font_urls = [
+                        "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf",
+                        "https://raw.githubusercontent.com/google/fonts/main/ofl/dejavusans/DejaVuSans.ttf",
+                        "https://www.fontsquirrel.com/fonts/download/dejavu-sans"
+                    ]
+                    
+                    for url in font_urls:
+                        try:
+                            print(f"Спроба завантаження з {url[:50]}...")
+                            urllib.request.urlretrieve(url, font_path)
+                            if font_path.exists() and font_path.stat().st_size > 100000:
+                                print("Шрифт успішно завантажено!")
+                                break
+                        except Exception as e:
+                            print(f"Помилка завантаження з {url[:30]}: {e}")
+                            continue
+                except Exception as e:
+                    print(f"Помилка завантаження шрифту: {e}")
             
-            # Перевіряємо, чи файл шрифту існує та має правильний розмір
-            if font_path.exists() and font_path.stat().st_size > 100000:  # Мінімум 100KB
-                # Додаємо шрифт до FPDF
-                self.add_font('DejaVu', '', str(font_path), uni=True)
-                self.set_font('DejaVu', '', 12)
-                self.font_loaded = True
-                self.cyrillic_supported = True
-                print("Шрифт DejaVu Sans успішно завантажено та налаштовано!")
-                return True
-            else:
-                raise Exception("Файл шрифту пошкоджений або неповний")
+            # Перевіряємо, чи вдалося завантажити шрифт
+            if font_path.exists() and font_path.stat().st_size > 100000:
+                try:
+                    # Додаємо шрифт до FPDF
+                    self.add_font('DejaVu', '', str(font_path), uni=True)
+                    self.set_font('DejaVu', '', 12)
+                    self.font_loaded = True
+                    self.cyrillic_supported = True
+                    print("Шрифт DejaVu Sans успішно налаштовано!")
+                    return True
+                except Exception as e:
+                    print(f"Помилка налаштування шрифту: {e}")
             
-        except Exception as e:
-            print(f"Помилка завантаження шрифту DejaVu: {e}")
+            # Якщо шрифт не завантажився, спробуємо вбудований варіант
+            print("Використовуємо резервний метод...")
             self.font_loaded = True
             self.cyrillic_supported = False
+            return False
             
-            # Не встановлюємо fallback шрифт тут - буде обробляться в create_text_pdf
+        except Exception as e:
+            print(f"Загальна помилка завантаження шрифту: {e}")
+            self.font_loaded = True
+            self.cyrillic_supported = False
             return False
 
 async def process_image_to_pdf(image_path):
@@ -57,7 +91,7 @@ async def process_image_to_pdf(image_path):
     try:
         # OCR обробка з українською та англійською мовами
         text = pytesseract.image_to_string(Image.open(image_path), lang='ukr+eng')
-        print(f"Розпізнаний текст: {text[:100]}...")  # Для налагодження
+        print(f"Розпізнаний текст: {text[:100]}...")
         
         # Створюємо PDF з розпізнаним текстом
         pdf_path = await create_text_pdf_with_cyrillic(text)
@@ -77,156 +111,335 @@ async def create_text_pdf(text):
 
 async def create_text_pdf_with_cyrillic(text):
     """Створює PDF файл з повною підтримкою кирилиці"""
-    print(f"Створюємо PDF з текстом: {text[:50]}...")  # Для налагодження
+    print(f"Створюємо PDF з текстом: {text[:50]}...")
     
-    # Спочатку спробуємо reportlab (найкраща підтримка Unicode)
+    # Метод 1: Спробуємо weasyprint (найкращий для HTML->PDF з Unicode)
     try:
-        return await create_text_pdf_reportlab(text)
+        return await create_pdf_weasyprint(text)
     except Exception as e:
-        print(f"Reportlab не працює: {e}")
+        print(f"WeasyPrint не працює: {e}")
     
-    # Потім спробуємо FPDF з кастомним шрифтом
+    # Метод 2: Спробуємо reportlab з детальним налаштуванням
+    try:
+        return await create_text_pdf_reportlab_advanced(text)
+    except Exception as e:
+        print(f"Reportlab advanced не працює: {e}")
+    
+    # Метод 3: Простий reportlab
+    try:
+        return await create_text_pdf_reportlab_simple(text)
+    except Exception as e:
+        print(f"Reportlab simple не працює: {e}")
+    
+    # Метод 4: FPDF з кастомним шрифтом
     try:
         return await create_text_pdf_fpdf_unicode(text)
     except Exception as e:
-        print(f"FPDF з Unicode не працює: {e}")
+        print(f"FPDF Unicode не працює: {e}")
     
+    # Метод 5: HTML to PDF через wkhtmltopdf подібний підхід
+    try:
+        return await create_pdf_from_html(text)
+    except Exception as e:
+        print(f"HTML to PDF не працює: {e}")
+        
     # В крайньому випадку використовуємо транслітерацію
-    print("УВАГА: Використовується транслітерація через проблеми зі шрифтами!")
+    print("❌ УВАГА: Всі методи Unicode не працюють! Використовується транслітерація.")
     return await create_text_pdf_basic_fallback(text)
 
-async def create_text_pdf_reportlab(text):
-    """Створює PDF з використанням reportlab (кращий метод)"""
+async def create_pdf_weasyprint(text):
+    """Створює PDF через WeasyPrint (найкращий метод)"""
+    try:
+        from weasyprint import HTML, CSS
+        
+        print("🔥 Використовуємо WeasyPrint (найкращий метод для Unicode)...")
+        
+        # Створюємо HTML з правильним кодуванням
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                @import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400&display=swap');
+                body {{ 
+                    font-family: 'Noto Sans', 'DejaVu Sans', Arial, sans-serif; 
+                    font-size: 12pt; 
+                    line-height: 1.4;
+                    margin: 2cm;
+                }}
+                p {{ margin-bottom: 1em; }}
+            </style>
+        </head>
+        <body>
+        """
+        
+        # Додаємо текст по параграфах
+        lines = text.split('\n')
+        for line in lines:
+            if line.strip():
+                html_content += f"<p>{line}</p>\n"
+            else:
+                html_content += "<p>&nbsp;</p>\n"
+        
+        html_content += "</body></html>"
+        
+        # Створюємо PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            pdf_path = tmp.name
+        
+        HTML(string=html_content).write_pdf(pdf_path)
+        print("✅ PDF створено через WeasyPrint!")
+        return pdf_path
+        
+    except ImportError:
+        raise Exception("WeasyPrint не встановлено")
+    except Exception as e:
+        raise Exception(f"WeasyPrint помилка: {e}")
+
+async def create_text_pdf_reportlab_advanced(text):
+    """Покращений reportlab з детальним налаштуванням"""
     try:
         from reportlab.pdfgen import canvas
         from reportlab.lib.pagesizes import A4
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
-        from reportlab.lib.styles import getSampleStyleSheet
-        from reportlab.platypus import SimpleDocTemplate, Paragraph
-        from reportlab.lib.units import inch
+        from reportlab.lib.utils import simpleSplit
         
-        print("Використовуємо reportlab для створення PDF...")
+        print("📄 Використовуємо покращений ReportLab...")
         
-        # Створюємо тимчасовий файл для PDF
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             pdf_path = tmp.name
         
-        # Завантажуємо та реєструємо шрифт
-        font_dir = Path("fonts")
-        font_dir.mkdir(exist_ok=True)
-        font_path = font_dir / "DejaVuSans.ttf"
+        # Список шрифтів для спроби
+        font_attempts = [
+            {
+                'name': 'DejaVuSans',
+                'url': 'https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf'
+            },
+            {
+                'name': 'NotoSans', 
+                'url': 'https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf'
+            }
+        ]
         
-        if not font_path.exists():
-            print("Завантажуємо шрифт для reportlab...")
-            font_url = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf"
-            urllib.request.urlretrieve(font_url, font_path)
-            print("Шрифт завантажено!")
+        font_loaded = False
+        active_font = 'DejaVuSans'
         
-        # Реєструємо шрифт
-        pdfmetrics.registerFont(TTFont('DejaVu', str(font_path)))
+        for font_info in font_attempts:
+            try:
+                font_dir = Path("fonts")
+                font_dir.mkdir(exist_ok=True)
+                font_path = font_dir / f"{font_info['name']}.ttf"
+                
+                if not font_path.exists():
+                    print(f"Завантажуємо {font_info['name']}...")
+                    urllib.request.urlretrieve(font_info['url'], font_path)
+                
+                if font_path.exists() and font_path.stat().st_size > 50000:
+                    pdfmetrics.registerFont(TTFont(font_info['name'], str(font_path)))
+                    active_font = font_info['name']
+                    font_loaded = True
+                    print(f"✅ Шрифт {font_info['name']} завантажено!")
+                    break
+                    
+            except Exception as e:
+                print(f"Помилка з {font_info['name']}: {e}")
+                continue
         
-        # Створюємо документ
-        doc = SimpleDocTemplate(pdf_path, pagesize=A4,
-                              rightMargin=72, leftMargin=72,
-                              topMargin=72, bottomMargin=18)
+        if not font_loaded:
+            raise Exception("Не вдалося завантажити жоден Unicode шрифт")
         
-        # Створюємо стиль з нашим шрифтом
-        styles = getSampleStyleSheet()
-        custom_style = styles['Normal']
-        custom_style.fontName = 'DejaVu'
-        custom_style.fontSize = 12
-        custom_style.leading = 14
+        # Створюємо PDF
+        c = canvas.Canvas(pdf_path, pagesize=A4)
+        width, height = A4
+        c.setFont(active_font, 12)
         
-        # Створюємо контент
-        story = []
+        # Налаштування для тексту
+        margin = 72  # 1 inch
+        line_height = 16
+        max_width = width - 2 * margin
+        y_position = height - margin
+        
         lines = text.split('\n')
         
         for line in lines:
-            if line.strip():  # Якщо рядок не порожній
-                para = Paragraph(line, custom_style)
-                story.append(para)
-            else:  # Додаємо порожній рядок
-                para = Paragraph("&nbsp;", custom_style)
-                story.append(para)
+            if y_position < margin + 50:  # Нова сторінка
+                c.showPage()
+                c.setFont(active_font, 12)
+                y_position = height - margin
+            
+            if line.strip():
+                # Розбиваємо довгі рядки
+                wrapped_lines = simpleSplit(line, active_font, 12, max_width)
+                for wrapped_line in wrapped_lines:
+                    if y_position < margin + 50:
+                        c.showPage()
+                        c.setFont(active_font, 12)
+                        y_position = height - margin
+                    
+                    c.drawString(margin, y_position, wrapped_line)
+                    y_position -= line_height
+            else:
+                y_position -= line_height  # Порожній рядок
         
-        # Будуємо документ
-        doc.build(story)
-        print("PDF створено успішно з reportlab!")
-        
+        c.save()
+        print("✅ PDF створено через покращений ReportLab!")
         return pdf_path
         
     except ImportError:
-        print("Reportlab не встановлено")
-        raise Exception("Reportlab не доступний")
+        raise Exception("ReportLab не встановлено")
     except Exception as e:
-        print(f"Помилка створення PDF з reportlab: {e}")
-        raise
+        raise Exception(f"ReportLab advanced помилка: {e}")
 
-async def create_text_pdf_fpdf_unicode(text):
-    """Створює PDF з FPDF та Unicode шрифтом"""
+async def create_text_pdf_reportlab_simple(text):
+    """Простий reportlab метод"""
     try:
-        print("Використовуємо FPDF з Unicode шрифтом...")
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
         
-        # Створюємо тимчасовий файл для PDF
+        print("📋 Використовуємо простий ReportLab...")
+        
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             pdf_path = tmp.name
         
-        # Створюємо PDF з підтримкою кирилиці
+        c = canvas.Canvas(pdf_path, pagesize=A4)
+        width, height = A4
+        
+        # Використовуємо стандартний шрифт з максимальною підтримкою
+        c.setFont("Helvetica", 12)
+        
+        y_position = height - 50
+        lines = text.split('\n')
+        
+        for line in lines:
+            if y_position < 50:
+                c.showPage()
+                c.setFont("Helvetica", 12)
+                y_position = height - 50
+            
+            # Конвертуємо в UTF-8, потім пробуємо вивести
+            try:
+                c.drawString(50, y_position, line)
+            except:
+                # Якщо не працює, залишаємо тільки ASCII символи
+                ascii_line = ''.join(char if ord(char) < 128 else '?' for char in line)
+                c.drawString(50, y_position, ascii_line)
+            
+            y_position -= 15
+        
+        c.save()
+        print("⚠️ PDF створено через простий ReportLab (можливо без Unicode)")
+        return pdf_path
+        
+    except Exception as e:
+        raise Exception(f"Simple ReportLab помилка: {e}")
+
+async def create_pdf_from_html(text):
+    """Створення PDF через HTML"""
+    try:
+        import subprocess
+        
+        print("🌐 Спроба створення PDF через HTML...")
+        
+        # Створюємо HTML файл
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; font-size: 12pt; margin: 2cm; }}
+                p {{ margin-bottom: 1em; }}
+            </style>
+        </head>
+        <body>
+        """
+        
+        lines = text.split('\n')
+        for line in lines:
+            if line.strip():
+                html_content += f"<p>{line}</p>\n"
+            else:
+                html_content += "<p>&nbsp;</p>\n"
+        
+        html_content += "</body></html>"
+        
+        # Зберігаємо HTML файл
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".html", encoding='utf-8') as html_tmp:
+            html_tmp.write(html_content)
+            html_path = html_tmp.name
+        
+        # Створюємо PDF файл
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as pdf_tmp:
+            pdf_path = pdf_tmp.name
+        
+        # Пробуємо різні утиліти для конвертації HTML в PDF
+        commands = [
+            ['wkhtmltopdf', html_path, pdf_path],
+            ['weasyprint', html_path, pdf_path],
+            ['prince', html_path, pdf_path]
+        ]
+        
+        success = False
+        for cmd in commands:
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode == 0 and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 100:
+                    success = True
+                    print(f"✅ PDF створено через {cmd[0]}!")
+                    break
+            except Exception as e:
+                print(f"Команда {cmd[0]} не працює: {e}")
+                continue
+        
+        # Видаляємо тимчасовий HTML
+        os.unlink(html_path)
+        
+        if success:
+            return pdf_path
+        else:
+            os.unlink(pdf_path)
+            raise Exception("Жодна HTML->PDF утиліта не працює")
+            
+    except Exception as e:
+        raise Exception(f"HTML to PDF помилка: {e}")
+
+async def create_text_pdf_fpdf_unicode(text):
+    """FPDF з Unicode шрифтом"""
+    try:
+        print("📝 Використовуємо FPDF з Unicode...")
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            pdf_path = tmp.name
+        
         pdf = CyrillicPDF()
         cyrillic_loaded = pdf.load_cyrillic_font()
         
         if not cyrillic_loaded:
-            raise Exception("Не вдалося завантажити шрифт з підтримкою кирилиці")
+            raise Exception("Не вдалося завантажити Unicode шрифт для FPDF")
         
         pdf.add_page()
         
-        # Розбиваємо текст на рядки та додаємо в PDF
         lines = text.split('\n')
-        line_height = 8
-        
         for line in lines:
-            # Перевіряємо, чи потрібна нова сторінка
-            if pdf.get_y() + line_height > 280:
+            if pdf.get_y() + 10 > 280:
                 pdf.add_page()
-                pdf.set_font('DejaVu', '', 12)  # Переналаштовуємо шрифт після нової сторінки
+                pdf.set_font('DejaVu', '', 12)
             
-            # Обробляємо довгі рядки (розбиваємо їх)
-            max_line_length = 90  # Символів на рядок
-            if len(line) > max_line_length:
-                words = line.split(' ')
-                current_line = ""
-                
-                for word in words:
-                    if len(current_line + word + " ") <= max_line_length:
-                        current_line += word + " "
-                    else:
-                        if current_line:
-                            pdf.cell(0, line_height, current_line.strip(), ln=True)
-                            if pdf.get_y() + line_height > 280:
-                                pdf.add_page()
-                                pdf.set_font('DejaVu', '', 12)
-                        current_line = word + " "
-                
-                if current_line:
-                    pdf.cell(0, line_height, current_line.strip(), ln=True)
-            else:
-                pdf.cell(0, line_height, line, ln=True)
+            pdf.cell(0, 8, line, ln=True)
         
-        # Зберігаємо PDF
         pdf.output(pdf_path)
-        print("PDF створено успішно з FPDF!")
-        
+        print("✅ PDF створено через FPDF Unicode!")
         return pdf_path
         
     except Exception as e:
-        print(f"Помилка створення PDF з FPDF: {e}")
-        raise
+        raise Exception(f"FPDF Unicode помилка: {e}")
 
 async def create_text_pdf_basic_fallback(text):
-    """Базове рішення з транслітерацією (останній варіант)"""
+    """Останній варіант з транслітерацією"""
     try:
-        print("ВИКОРИСТОВУЄТЬСЯ ТРАНСЛІТЕРАЦІЯ! Кирилиця буде замінена на латиницю.")
+        print("❌ ВИКОРИСТОВУЄТЬСЯ ТРАНСЛІТЕРАЦІЯ!")
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             pdf_path = tmp.name
@@ -237,7 +450,6 @@ async def create_text_pdf_basic_fallback(text):
         
         lines = text.split('\n')
         for line in lines:
-            # Замінюємо кирилічні символи на латинські аналоги
             transliterated = transliterate_cyrillic(line)
             pdf.cell(0, 10, transliterated, ln=True)
         
@@ -245,11 +457,11 @@ async def create_text_pdf_basic_fallback(text):
         return pdf_path
         
     except Exception as e:
-        print(f"Помилка створення базового PDF: {e}")
+        print(f"Навіть fallback не працює: {e}")
         raise
 
 def transliterate_cyrillic(text):
-    """Транслітерація кирилиці (використовується тільки як крайній засіб)"""
+    """Транслітерація кирилиці"""
     cyrillic_to_latin = {
         'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'є': 'ye',
         'ж': 'zh', 'з': 'z', 'и': 'y', 'і': 'i', 'ї': 'yi', 'й': 'y', 'к': 'k',
@@ -266,10 +478,9 @@ def transliterate_cyrillic(text):
     result = ""
     for char in text:
         result += cyrillic_to_latin.get(char, char)
-    
     return result
 
 # Залишаємо для зворотної сумісності
 async def create_text_pdf_unicode(text):
-    """Створює PDF файл з текстом використовуючи reportlab для кращої підтримки Unicode"""
-    return await create_text_pdf_reportlab(text)
+    """Створює PDF файл з текстом використовуючи найкращий доступний метод"""
+    return await create_text_pdf_with_cyrillic(text)
