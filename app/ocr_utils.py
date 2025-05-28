@@ -1,51 +1,115 @@
-import pytesseract
-from PIL import Image
+import os
+import tempfile
 from fpdf import FPDF
-import os
-import tempfile
+from PIL import Image
+import pytesseract
 
-FONT_PATH = "./app/fonts/DejaVuSans.ttf"
+async def process_image_to_pdf(image_path):
+    """Обробляє зображення та створює PDF з розпізнаним текстом"""
+    try:
+        # OCR обробка
+        text = pytesseract.image_to_string(Image.open(image_path), lang='ukr+eng')
+        
+        # Створюємо PDF з розпізнаним текстом
+        pdf_path = await create_text_pdf(text)
+        
+        # Видаляємо тимчасове зображення
+        if os.path.exists(image_path):
+            os.unlink(image_path)
+            
+        return pdf_path
+    except Exception as e:
+        print(f"Помилка обробки зображення: {e}")
+        raise
 
-async def process_image_to_pdf(img_path: str) -> str:
-    img = Image.open(img_path)
-    text = pytesseract.image_to_string(img, lang="ukr+eng")
+async def create_text_pdf(text):
+    """Створює PDF файл з текстом"""
+    try:
+        # Створюємо тимчасовий файл для PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            pdf_path = tmp.name
+        
+        # Створюємо PDF
+        pdf = FPDF()
+        pdf.add_page()
+        
+        # Використовуємо вбудований шрифт, який підтримує Unicode
+        try:
+            # Спробуємо використати Arial Unicode (якщо доступний)
+            pdf.set_font('Arial', '', 12)
+        except:
+            # Якщо Arial недоступний, використовуємо базовий шрифт
+            pdf.set_font('Times', '', 12)
+        
+        # Розбиваємо текст на рядки та додаємо в PDF
+        lines = text.split('\n')
+        for line in lines:
+            # Кодуємо текст для правильного відображення
+            try:
+                # Спробуємо використати latin-1 кодування
+                encoded_line = line.encode('latin-1', 'ignore').decode('latin-1')
+                pdf.cell(0, 10, encoded_line, ln=True)
+            except:
+                # Якщо не вдається кодувати, використовуємо ASCII
+                ascii_line = line.encode('ascii', 'ignore').decode('ascii')
+                pdf.cell(0, 10, ascii_line, ln=True)
+        
+        # Зберігаємо PDF
+        pdf.output(pdf_path)
+        
+        return pdf_path
+        
+    except Exception as e:
+        print(f"Помилка створення PDF: {e}")
+        raise
 
-    pdf = FPDF()
-    pdf.add_page()
-
-    if os.path.exists(FONT_PATH):
-        pdf.add_font("DejaVu", "", FONT_PATH, uni=True)
-        pdf.set_font("DejaVu", size=12)
-    else:
-        pdf.set_font("Arial", size=12)
-
-    pdf.multi_cell(0, 10, text.strip() or "No text detected.")
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
-        pdf.output(tmp_pdf.name)
-        return tmp_pdf.name
-
-async def create_text_pdf(text: str) -> str:
-   from fpdf import FPDF
-import tempfile
-import os
-
-def get_font_path():
-    return os.path.join(os.path.dirname(__file__), "DejaVuSans.ttf")
-
-async def create_text_pdf(text: str) -> str:
-    pdf = FPDF()
-    pdf.add_page()
-
-    # Додай шрифт, який підтримує UTF-8 (треба мати файл DejaVuSans.ttf у тому ж каталозі)
-    font_path = get_font_path()
-    pdf.add_font("DejaVu", "", font_path, uni=True)
-    pdf.set_font("DejaVu", size=12)
-
-    # Додай текст
-    pdf.multi_cell(0, 10, txt=text)
-
-    # Зберігаємо у тимчасовий файл
-    tmp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    pdf.output(tmp_pdf.name)
-    return tmp_pdf.name
+# Альтернативна версія з підтримкою Unicode через reportlab
+async def create_text_pdf_unicode(text):
+    """Створює PDF файл з текстом використовуючи reportlab для кращої підтримки Unicode"""
+    try:
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        
+        # Створюємо тимчасовий файл для PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            pdf_path = tmp.name
+        
+        # Створюємо PDF
+        c = canvas.Canvas(pdf_path, pagesize=letter)
+        width, height = letter
+        
+        # Налаштовуємо шрифт
+        c.setFont("Helvetica", 12)
+        
+        # Розбиваємо текст на рядки
+        lines = text.split('\n')
+        y_position = height - 50
+        
+        for line in lines:
+            if y_position < 50:  # Нова сторінка, якщо місце закінчилось
+                c.showPage()
+                y_position = height - 50
+                c.setFont("Helvetica", 12)
+            
+            # Додаємо рядок
+            try:
+                c.drawString(50, y_position, line)
+            except:
+                # Якщо є проблеми з кодуванням, використовуємо ASCII
+                ascii_line = line.encode('ascii', 'ignore').decode('ascii')
+                c.drawString(50, y_position, ascii_line)
+            
+            y_position -= 15
+        
+        c.save()
+        return pdf_path
+        
+    except ImportError:
+        # Якщо reportlab недоступний, використовуємо стандартну версію
+        return await create_text_pdf(text)
+    except Exception as e:
+        print(f"Помилка створення PDF з reportlab: {e}")
+        # Fallback до стандартної версії
+        return await create_text_pdf(text)
