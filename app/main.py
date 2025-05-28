@@ -2,13 +2,23 @@ from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 import os
 import tempfile
 import uvicorn
-from ocr_utils import process_image_to_pdf, create_text_pdf
+from app.ocr_utils import process_image_to_pdf, create_text_pdf
 
 app = FastAPI()
+
+# Додаємо CORS для React фронтенду
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # У продакшені вкажіть конкретні домени
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Підключаємо статику, якщо є папка static
 if os.path.isdir("static"):
@@ -43,6 +53,24 @@ async def text_to_pdf(text: str = Form(...)):
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+# API ендпоінти для React
+@app.post("/api/upload/")
+async def api_upload_file(file: UploadFile = File(...)):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+        contents = await file.read()
+        tmp.write(contents)
+        tmp_path = tmp.name
+    
+    pdf_path = await process_image_to_pdf(tmp_path)
+    os.unlink(tmp_path)
+    
+    return FileResponse(pdf_path, media_type='application/pdf', filename="ocr_result.pdf")
+
+@app.post("/api/text/")
+async def api_text_to_pdf(text: str = Form(...)):
+    pdf_path = await create_text_pdf(text)
+    return FileResponse(pdf_path, media_type='application/pdf', filename="text_to_pdf.pdf")
 
 if __name__ == "__main__":
     # Отримуємо порт з змінної середовища (Render автоматично встановлює PORT)
