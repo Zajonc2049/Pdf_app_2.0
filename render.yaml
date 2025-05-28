@@ -1,9 +1,9 @@
 services:
   - type: web
-    name: pdf-converter
+    name: pdf-service
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python app/main.py
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python app/main.py"
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11
+        value: 3.9
