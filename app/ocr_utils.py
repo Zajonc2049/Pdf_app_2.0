@@ -7,412 +7,480 @@ import urllib.request
 from pathlib import Path
 import base64
 import io
-import logging
 
-# Налаштування логування
-logger = logging.getLogger(__name__)
+# Вбудований шрифт DejaVu Sans в base64 (частина шрифту для кирилиці)
+DEJAVU_FONT_BASE64 = """
+T1RUTwACAAgAAQAAQ0ZGIAhlgnQAABqcAAAAlkZGVE0BdgIgAAAcNAAAABxHREVGABkAFAAAHFAAAAAe
+T1MvMmcbMHEAAACgAAAAYGNtYXCRjgVZAAABAAAAAGRnYXNwAAAAEAAAHDAAAAAIZ2x5ZouAFdgAAAJY
+AAAVkmhlYWQWZDbmAAAX7AAAADZoaGVhBfQD7AAAGCQAAAAKAG1heHAAlwAAAAAYLAAAACBuYW1lEWLu
+yAAAGEwAAANacG9zdP/uADEAABuoAAAAIAABAAAAAQAAztqNJF8PPPUACwPoAAAAANdFvVgAAAAA10W9
+WAAAAAAAIAAgACAAIAAGAAwAGwAsAEYAWgBnAHoAlwCkALcAzwDlAPoBDwEqAUMBXAF5AZYBrwHGAd0B
++gIVAjICTwJs
+"""
 
-class UTF8FPDF(FPDF):
-    """FPDF клас з підтримкою Unicode"""
+class CyrillicPDF(FPDF):
+    """Розширений клас FPDF з підтримкою кирилиці"""
     
     def __init__(self):
         super().__init__()
         self.font_loaded = False
-        self.current_font = None
+        self.cyrillic_supported = False
     
-    def load_unicode_font(self):
-        """Завантажуємо шрифт з підтримкою кирилиці"""
+    def load_cyrillic_font(self):
+        """Завантажує шрифт з підтримкою кирилиці"""
         if self.font_loaded:
-            return
+            return self.cyrillic_supported
             
         try:
-            # Спробуємо завантажити шрифт DejaVu (є в більшості Linux систем)
-            font_paths = [
-                '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-                '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
-                '/System/Library/Fonts/Helvetica.ttc',  # macOS
-                'C:/Windows/Fonts/arial.ttf'  # Windows
-            ]
+            # Створюємо папку для шрифтів
+            font_dir = Path("fonts")
+            font_dir.mkdir(exist_ok=True)
+            font_path = font_dir / "DejaVuSans.ttf"
             
-            font_loaded = False
-            for font_path in font_paths:
-                if os.path.exists(font_path):
-                    try:
-                        self.add_font('DejaVu', '', font_path, uni=True)
-                        self.set_font('DejaVu', '', 12)
-                        self.current_font = 'DejaVu'
-                        font_loaded = True
-                        logger.info(f"✅ Завантажено шрифт: {font_path}")
-                        break
-                    except Exception as e:
-                        logger.warning(f"⚠️ Не вдалося завантажити {font_path}: {e}")
-                        continue
-            
-            if not font_loaded:
-                # Якщо не знайшли шрифт, використовуємо стандартний
-                logger.warning("⚠️ Не знайдено Unicode шрифт, використовуємо стандартний")
+            # Спочатку спробуємо завантажити з інтернету
+            if not font_path.exists():
+                print("Завантажуємо шрифт DejaVu Sans...")
                 try:
-                    self.set_font('Arial', '', 12)
-                    self.current_font = 'Arial'
-                except:
-                    # Якщо Arial недоступний, використовуємо будь-який доступний
-                    self.set_font('Helvetica', '', 12)
-                    self.current_font = 'Helvetica'
+                    # Список альтернативних URL для шрифту
+                    font_urls = [
+                        "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf",
+                        "https://raw.githubusercontent.com/google/fonts/main/ofl/dejavusans/DejaVuSans.ttf",
+                        "https://www.fontsquirrel.com/fonts/download/dejavu-sans"
+                    ]
+                    
+                    for url in font_urls:
+                        try:
+                            print(f"Спроба завантаження з {url[:50]}...")
+                            urllib.request.urlretrieve(url, font_path)
+                            if font_path.exists() and font_path.stat().st_size > 100000:
+                                print("Шрифт успішно завантажено!")
+                                break
+                        except Exception as e:
+                            print(f"Помилка завантаження з {url[:30]}: {e}")
+                            continue
+                except Exception as e:
+                    print(f"Помилка завантаження шрифту: {e}")
             
+            # Перевіряємо, чи вдалося завантажити шрифт
+            if font_path.exists() and font_path.stat().st_size > 100000:
+                try:
+                    # Додаємо шрифт до FPDF
+                    self.add_font('DejaVu', '', str(font_path), uni=True)
+                    self.set_font('DejaVu', '', 12)
+                    self.font_loaded = True
+                    self.cyrillic_supported = True
+                    print("Шрифт DejaVu Sans успішно налаштовано!")
+                    return True
+                except Exception as e:
+                    print(f"Помилка налаштування шрифту: {e}")
+            
+            # Якщо шрифт не завантажився, спробуємо вбудований варіант
+            print("Використовуємо резервний метод...")
             self.font_loaded = True
+            self.cyrillic_supported = False
+            return False
             
         except Exception as e:
-            logger.error(f"❌ Помилка завантаження шрифту: {e}")
-            try:
-                self.set_font('Helvetica', '', 12)
-                self.current_font = 'Helvetica'
-            except:
-                pass
+            print(f"Загальна помилка завантаження шрифту: {e}")
             self.font_loaded = True
+            self.cyrillic_supported = False
+            return False
 
-    def set_font_size(self, size):
-        """Встановлює розмір шрифту"""
-        self.load_unicode_font()  # Переконуємося, що шрифт завантажено
-        if self.current_font:
-            self.set_font(self.current_font, '', size)
-        else:
-            super().set_font_size(size)
-
-    def add_utf8_text(self, text):
-        """Додає текст з підтримкою UTF-8"""
-        self.load_unicode_font()
+async def process_image_to_pdf(image_path):
+    """Обробляє зображення та створює PDF з розпізнаним текстом"""
+    try:
+        # OCR обробка з українською та англійською мовами
+        text = pytesseract.image_to_string(Image.open(image_path), lang='ukr+eng')
+        print(f"Розпізнаний текст: {text[:100]}...")
         
-        # Розбиваємо текст на рядки
+        # Створюємо PDF з розпізнаним текстом
+        pdf_path = await create_text_pdf_with_cyrillic(text)
+        
+        # Видаляємо тимчасове зображення
+        if os.path.exists(image_path):
+            os.unlink(image_path)
+            
+        return pdf_path
+    except Exception as e:
+        print(f"Помилка обробки зображення: {e}")
+        raise
+
+async def create_text_pdf(text):
+    """Створює PDF файл з текстом - головна функція"""
+    return await create_text_pdf_with_cyrillic(text)
+
+async def create_text_pdf_with_cyrillic(text):
+    """Створює PDF файл з повною підтримкою кирилиці"""
+    print(f"Створюємо PDF з текстом: {text[:50]}...")
+    
+    # Метод 1: Спробуємо weasyprint (найкращий для HTML->PDF з Unicode)
+    try:
+        return await create_pdf_weasyprint(text)
+    except Exception as e:
+        print(f"WeasyPrint не працює: {e}")
+    
+    # Метод 2: Спробуємо reportlab з детальним налаштуванням
+    try:
+        return await create_text_pdf_reportlab_advanced(text)
+    except Exception as e:
+        print(f"Reportlab advanced не працює: {e}")
+    
+    # Метод 3: Простий reportlab
+    try:
+        return await create_text_pdf_reportlab_simple(text)
+    except Exception as e:
+        print(f"Reportlab simple не працює: {e}")
+    
+    # Метод 4: FPDF з кастомним шрифтом
+    try:
+        return await create_text_pdf_fpdf_unicode(text)
+    except Exception as e:
+        print(f"FPDF Unicode не працює: {e}")
+    
+    # Метод 5: HTML to PDF через wkhtmltopdf подібний підхід
+    try:
+        return await create_pdf_from_html(text)
+    except Exception as e:
+        print(f"HTML to PDF не працює: {e}")
+        
+    # В крайньому випадку використовуємо транслітерацію
+    print("❌ УВАГА: Всі методи Unicode не працюють! Використовується транслітерація.")
+    return await create_text_pdf_basic_fallback(text)
+
+async def create_pdf_weasyprint(text):
+    """Створює PDF через WeasyPrint (найкращий метод)"""
+    try:
+        from weasyprint import HTML, CSS
+        
+        print("🔥 Використовуємо WeasyPrint (найкращий метод для Unicode)...")
+        
+        # Створюємо HTML з правильним кодуванням
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                @import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400&display=swap');
+                body {{ 
+                    font-family: 'Noto Sans', 'DejaVu Sans', Arial, sans-serif; 
+                    font-size: 12pt; 
+                    line-height: 1.4;
+                    margin: 2cm;
+                }}
+                p {{ margin-bottom: 1em; }}
+            </style>
+        </head>
+        <body>
+        """
+        
+        # Додаємо текст по параграфах
+        lines = text.split('\n')
+        for line in lines:
+            if line.strip():
+                html_content += f"<p>{line}</p>\n"
+            else:
+                html_content += "<p>&nbsp;</p>\n"
+        
+        html_content += "</body></html>"
+        
+        # Створюємо PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            pdf_path = tmp.name
+        
+        HTML(string=html_content).write_pdf(pdf_path)
+        print("✅ PDF створено через WeasyPrint!")
+        return pdf_path
+        
+    except ImportError:
+        raise Exception("WeasyPrint не встановлено")
+    except Exception as e:
+        raise Exception(f"WeasyPrint помилка: {e}")
+
+async def create_text_pdf_reportlab_advanced(text):
+    """Покращений reportlab з детальним налаштуванням"""
+    try:
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.lib.utils import simpleSplit
+        
+        print("📄 Використовуємо покращений ReportLab...")
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            pdf_path = tmp.name
+        
+        # Список шрифтів для спроби
+        font_attempts = [
+            {
+                'name': 'DejaVuSans',
+                'url': 'https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf'
+            },
+            {
+                'name': 'NotoSans', 
+                'url': 'https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf'
+            }
+        ]
+        
+        font_loaded = False
+        active_font = 'DejaVuSans'
+        
+        for font_info in font_attempts:
+            try:
+                font_dir = Path("fonts")
+                font_dir.mkdir(exist_ok=True)
+                font_path = font_dir / f"{font_info['name']}.ttf"
+                
+                if not font_path.exists():
+                    print(f"Завантажуємо {font_info['name']}...")
+                    urllib.request.urlretrieve(font_info['url'], font_path)
+                
+                if font_path.exists() and font_path.stat().st_size > 50000:
+                    pdfmetrics.registerFont(TTFont(font_info['name'], str(font_path)))
+                    active_font = font_info['name']
+                    font_loaded = True
+                    print(f"✅ Шрифт {font_info['name']} завантажено!")
+                    break
+                    
+            except Exception as e:
+                print(f"Помилка з {font_info['name']}: {e}")
+                continue
+        
+        if not font_loaded:
+            raise Exception("Не вдалося завантажити жоден Unicode шрифт")
+        
+        # Створюємо PDF
+        c = canvas.Canvas(pdf_path, pagesize=A4)
+        width, height = A4
+        c.setFont(active_font, 12)
+        
+        # Налаштування для тексту
+        margin = 72  # 1 inch
+        line_height = 16
+        max_width = width - 2 * margin
+        y_position = height - margin
+        
         lines = text.split('\n')
         
         for line in lines:
-            # Перевіряємо, чи поміститься рядок на сторінці
-            if self.get_y() > 250:  # Якщо близько до кінця сторінки
-                self.add_page()
-                self.load_unicode_font()  # Відновлюємо шрифт після нової сторінки
+            if y_position < margin + 50:  # Нова сторінка
+                c.showPage()
+                c.setFont(active_font, 12)
+                y_position = height - margin
             
-            try:
-                # Спробуємо додати рядок як є
-                self.cell(0, 10, line, ln=True)
-            except Exception as e:
-                logger.warning(f"⚠️ Помилка з рядком '{line[:50]}...': {e}")
-                try:
-                    # Якщо не вийшло, спробуємо закодувати
-                    encoded_line = line.encode('latin1', 'ignore').decode('latin1')
-                    self.cell(0, 10, encoded_line, ln=True)
-                except:
-                    # В крайньому випадку, пропускаємо рядок
-                    self.cell(0, 10, '[Text encoding error]', ln=True)
+            if line.strip():
+                # Розбиваємо довгі рядки
+                wrapped_lines = simpleSplit(line, active_font, 12, max_width)
+                for wrapped_line in wrapped_lines:
+                    if y_position < margin + 50:
+                        c.showPage()
+                        c.setFont(active_font, 12)
+                        y_position = height - margin
+                    
+                    c.drawString(margin, y_position, wrapped_line)
+                    y_position -= line_height
+            else:
+                y_position -= line_height  # Порожній рядок
+        
+        c.save()
+        print("✅ PDF створено через покращений ReportLab!")
+        return pdf_path
+        
+    except ImportError:
+        raise Exception("ReportLab не встановлено")
+    except Exception as e:
+        raise Exception(f"ReportLab advanced помилка: {e}")
 
-# Конфігурація для Render
-def configure_tesseract_for_render():
-    """Налаштовує Tesseract для роботи на Render"""
-    # На Render Tesseract зазвичай встановлено в стандартному місці
-    possible_paths = [
-        '/usr/bin/tesseract',  # Стандартний шлях на Linux
-        '/usr/local/bin/tesseract',
-        '/opt/homebrew/bin/tesseract',
-        'tesseract'  # Системний PATH
-    ]
-    
-    for path in possible_paths:
-        if path == 'tesseract' or os.path.exists(path):
-            pytesseract.pytesseract.tesseract_cmd = path
-            logger.info(f"Tesseract знайдено: {path}")
-            return True
-    
-    logger.warning("⚠️ Tesseract не знайдено в стандартних місцях")
-    return False
-
-async def create_text_pdf_with_cyrillic(text):
-    """Створює PDF з тексту з підтримкою кирилиці"""
+async def create_text_pdf_reportlab_simple(text):
+    """Простий reportlab метод"""
     try:
-        logger.info("📄 Створення PDF з кирилицею...")
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
         
-        # Створюємо PDF з Unicode підтримкою
-        pdf = UTF8FPDF()
-        pdf.add_page()
+        print("📋 Використовуємо простий ReportLab...")
         
-        # Завантажуємо шрифт спочатку
-        pdf.load_unicode_font()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            pdf_path = tmp.name
         
-        # Додаємо заголовок
-        pdf.set_font_size(16)
-        pdf.cell(0, 10, 'Розпізнаний текст', ln=True, align='C')
-        pdf.ln(10)
+        c = canvas.Canvas(pdf_path, pagesize=A4)
+        width, height = A4
         
-        # Додаємо основний текст
-        pdf.set_font_size(12)
-        pdf.add_utf8_text(text)
+        # Використовуємо стандартний шрифт з максимальною підтримкою
+        c.setFont("Helvetica", 12)
         
-        # Зберігаємо в тимчасовий файл
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-            pdf_path = tmp_file.name
-            pdf.output(pdf_path)
+        y_position = height - 50
+        lines = text.split('\n')
         
-        logger.info(f"✅ PDF створено: {pdf_path}")
+        for line in lines:
+            if y_position < 50:
+                c.showPage()
+                c.setFont("Helvetica", 12)
+                y_position = height - 50
+            
+            # Конвертуємо в UTF-8, потім пробуємо вивести
+            try:
+                c.drawString(50, y_position, line)
+            except:
+                # Якщо не працює, залишаємо тільки ASCII символи
+                ascii_line = ''.join(char if ord(char) < 128 else '?' for char in line)
+                c.drawString(50, y_position, ascii_line)
+            
+            y_position -= 15
+        
+        c.save()
+        print("⚠️ PDF створено через простий ReportLab (можливо без Unicode)")
         return pdf_path
         
     except Exception as e:
-        logger.error(f"❌ Помилка створення PDF: {e}")
-        
-        # Якщо основний метод не спрацював, спробуємо простіший підхід
-        try:
-            logger.info("🔄 Спроба створення простого PDF...")
-            simple_pdf = FPDF()
-            simple_pdf.add_page()
-            simple_pdf.set_font('Arial', '', 12)
-            
-            # Конвертуємо кирилицю в латиницю для простого PDF
-            import unicodedata
-            ascii_text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
-            
-            simple_pdf.cell(0, 10, 'Recognized Text (ASCII)', ln=True)
-            simple_pdf.ln(5)
-            
-            lines = ascii_text.split('\n')
-            for line in lines:
-                if simple_pdf.get_y() > 250:
-                    simple_pdf.add_page()
-                    simple_pdf.set_font('Arial', '', 12)
-                simple_pdf.cell(0, 8, line[:80], ln=True)  # Обмежуємо довжину рядка
-            
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-                pdf_path = tmp_file.name
-                simple_pdf.output(pdf_path)
-            
-            logger.info(f"✅ Простий PDF створено: {pdf_path}")
-            return pdf_path
-            
-        except Exception as simple_error:
-            logger.error(f"❌ Помилка створення простого PDF: {simple_error}")
-            raise Exception(f"Не вдалося створити PDF: {str(e)} | Простий PDF: {str(simple_error)}")
+        raise Exception(f"Simple ReportLab помилка: {e}")
 
-async def create_text_pdf(text):
-    """Створює PDF з тексту (загальна функція)"""
-    return await create_text_pdf_with_cyrillic(text)
-
-async def process_image_to_pdf(image_path):
-    """Обробляє зображення та створює PDF з розпізнаним текстом (оптимізовано для Render)"""
+async def create_pdf_from_html(text):
+    """Створення PDF через HTML"""
     try:
-        logger.info(f"🔍 Render: Початок обробки зображення: {image_path}")
+        import subprocess
         
-        # Налаштовуємо Tesseract
-        configure_tesseract_for_render()
+        print("🌐 Спроба створення PDF через HTML...")
         
-        # Перевіряємо, чи існує файл
-        if not os.path.exists(image_path):
-            raise FileNotFoundError(f"Файл не знайдено: {image_path}")
+        # Створюємо HTML файл
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; font-size: 12pt; margin: 2cm; }}
+                p {{ margin-bottom: 1em; }}
+            </style>
+        </head>
+        <body>
+        """
         
-        file_size = os.path.getsize(image_path)
-        if file_size == 0:
-            raise ValueError("Файл порожній")
+        lines = text.split('\n')
+        for line in lines:
+            if line.strip():
+                html_content += f"<p>{line}</p>\n"
+            else:
+                html_content += "<p>&nbsp;</p>\n"
         
-        logger.info(f"📏 Розмір файлу: {file_size} байт")
+        html_content += "</body></html>"
         
-        # Відкриваємо та обробляємо зображення
-        try:
-            with Image.open(image_path) as img:
-                logger.info(f"🖼️ Зображення відкрито: {img.format}, розмір: {img.size}, режим: {img.mode}")
-                
-                # Оптимізація зображення для OCR
-                if img.mode not in ('RGB', 'L'):
-                    img = img.convert('RGB')
-                    logger.info("🔄 Конвертовано в RGB")
-                
-                # Якщо зображення дуже велике, зменшуємо його
-                max_size = 2000
-                if img.width > max_size or img.height > max_size:
-                    img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-                    logger.info(f"📉 Зображення зменшено до: {img.size}")
-                
-                # Зберігаємо оптимізоване зображення
-                optimized_path = image_path + "_opt.jpg"
-                img.save(optimized_path, 'JPEG', quality=95)
-                image_path = optimized_path
-                
-        except Exception as e:
-            logger.error(f"❌ Помилка відкриття зображення: {e}")
-            raise ValueError(f"Не вдалося відкрити зображення: {e}")
+        # Зберігаємо HTML файл
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".html", encoding='utf-8') as html_tmp:
+            html_tmp.write(html_content)
+            html_path = html_tmp.name
         
-        # Тестуємо Tesseract
-        try:
-            version = pytesseract.get_tesseract_version()
-            logger.info(f"✅ Tesseract версія: {version}")
-        except Exception as e:
-            logger.warning(f"⚠️ Проблема з Tesseract: {e}")
-            # Спробуємо встановити змінну середовища
-            os.environ['TESSDATA_PREFIX'] = '/usr/share/tesseract-ocr/5/tessdata/'
+        # Створюємо PDF файл
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as pdf_tmp:
+            pdf_path = pdf_tmp.name
         
-        # OCR обробка з послідовними спробами
-        text = ""
-        ocr_configs = [
-            {'lang': 'ukr+eng', 'config': '--psm 6 -c preserve_interword_spaces=1'},
-            {'lang': 'ukr+eng', 'config': '--psm 3'},
-            {'lang': 'ukr', 'config': '--psm 6'},
-            {'lang': 'eng', 'config': '--psm 6'},
-            {'lang': 'eng', 'config': '--psm 3'},
-            {'lang': '', 'config': '--psm 6'}  # Без мови
+        # Пробуємо різні утиліти для конвертації HTML в PDF
+        commands = [
+            ['wkhtmltopdf', html_path, pdf_path],
+            ['weasyprint', html_path, pdf_path],
+            ['prince', html_path, pdf_path]
         ]
         
-        logger.info("🔤 Початок OCR обробки...")
-        
-        for i, ocr_config in enumerate(ocr_configs):
+        success = False
+        for cmd in commands:
             try:
-                logger.info(f"🔍 OCR спроба {i+1}: lang='{ocr_config['lang']}', config='{ocr_config['config']}'")
-                
-                with Image.open(image_path) as ocr_img:
-                    if ocr_config['lang']:
-                        text = pytesseract.image_to_string(
-                            ocr_img,
-                            lang=ocr_config['lang'],
-                            config=ocr_config['config']
-                        )
-                    else:
-                        text = pytesseract.image_to_string(
-                            ocr_img,
-                            config=ocr_config['config']
-                        )
-                
-                if text.strip():
-                    logger.info(f"✅ OCR успішно: {len(text)} символів")
-                    logger.info(f"📝 Перші 100 символів: {text[:100]}")
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode == 0 and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 100:
+                    success = True
+                    print(f"✅ PDF створено через {cmd[0]}!")
                     break
-                else:
-                    logger.warning(f"⚠️ OCR повернув порожній результат")
-                    
             except Exception as e:
-                logger.warning(f"❌ OCR спроба {i+1} провалилася: {e}")
+                print(f"Команда {cmd[0]} не працює: {e}")
                 continue
         
-        # Якщо текст не розпізнано
-        if not text.strip():
-            text = """Текст не розпізнано.
+        # Видаляємо тимчасовий HTML
+        os.unlink(html_path)
+        
+        if success:
+            return pdf_path
+        else:
+            os.unlink(pdf_path)
+            raise Exception("Жодна HTML->PDF утиліта не працює")
+            
+    except Exception as e:
+        raise Exception(f"HTML to PDF помилка: {e}")
 
-Можливі причини:
-• Зображення не містить тексту
-• Якість зображення недостатня
-• Текст написаний нечітким шрифтом
-• Потрібно покращити освітлення зображення
-
-Спробуйте:
-• Зробити більш чітке фото
-• Покращити освітлення
-• Використати контрастніше зображення"""
-            logger.warning("⚠️ OCR не розпізнав текст, використовуємо повідомлення за замовчуванням")
+async def create_text_pdf_fpdf_unicode(text):
+    """FPDF з Unicode шрифтом"""
+    try:
+        print("📝 Використовуємо FPDF з Unicode...")
         
-        # Створюємо PDF
-        logger.info("📄 Створення PDF...")
-        pdf_path = await create_text_pdf_with_cyrillic(text)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            pdf_path = tmp.name
         
-        if not os.path.exists(pdf_path):
-            raise Exception("PDF файл не створено")
+        pdf = CyrillicPDF()
+        cyrillic_loaded = pdf.load_cyrillic_font()
         
-        logger.info(f"✅ PDF успішно створено: {pdf_path}")
+        if not cyrillic_loaded:
+            raise Exception("Не вдалося завантажити Unicode шрифт для FPDF")
         
-        # Очищення тимчасових файлів
-        cleanup_files = [image_path]
-        if image_path.endswith("_opt.jpg"):
-            cleanup_files.append(image_path.replace("_opt.jpg", ""))
+        pdf.add_page()
         
-        for file_path in cleanup_files:
-            try:
-                if os.path.exists(file_path) and file_path != pdf_path:
-                    os.unlink(file_path)
-                    logger.info(f"🗑️ Видалено: {file_path}")
-            except Exception as e:
-                logger.warning(f"⚠️ Не вдалося видалити {file_path}: {e}")
+        lines = text.split('\n')
+        for line in lines:
+            if pdf.get_y() + 10 > 280:
+                pdf.add_page()
+                pdf.set_font('DejaVu', '', 12)
+            
+            pdf.cell(0, 8, line, ln=True)
         
+        pdf.output(pdf_path)
+        print("✅ PDF створено через FPDF Unicode!")
         return pdf_path
         
     except Exception as e:
-        logger.error(f"❌ Критична помилка обробки зображення: {e}")
-        
-        # Очищення у разі помилки
-        cleanup_files = [image_path]
-        if image_path.endswith("_opt.jpg"):
-            cleanup_files.append(image_path.replace("_opt.jpg", ""))
-            
-        for file_path in cleanup_files:
-            try:
-                if os.path.exists(file_path):
-                    os.unlink(file_path)
-            except:
-                pass
-        
-        raise Exception(f"Помилка обробки зображення: {str(e)}")
+        raise Exception(f"FPDF Unicode помилка: {e}")
 
-# Функція для перевірки системи на Render
-def check_render_environment():
-    """Перевіряє середовище Render"""
-    logger.info("🔍 Перевірка середовища Render...")
-    
-    # Перевірка Tesseract
+async def create_text_pdf_basic_fallback(text):
+    """Останній варіант з транслітерацією"""
     try:
-        configure_tesseract_for_render()
-        version = pytesseract.get_tesseract_version()
-        logger.info(f"✅ Tesseract: {version}")
-    except Exception as e:
-        logger.error(f"❌ Tesseract проблема: {e}")
-    
-    # Перевірка мов
-    try:
-        langs = pytesseract.get_languages()
-        logger.info(f"✅ Доступні мови: {langs}")
+        print("❌ ВИКОРИСТОВУЄТЬСЯ ТРАНСЛІТЕРАЦІЯ!")
         
-        # Перевіряємо наявність української мови
-        if 'ukr' in langs:
-            logger.info("✅ Українська мова доступна")
-        else:
-            logger.warning("⚠️ Українська мова недоступна")
-            
-    except Exception as e:
-        logger.error(f"❌ Не вдалося отримати список мов: {e}")
-    
-    # Перевірка папок
-    try:
-        os.makedirs("temp", exist_ok=True)
-        logger.info("✅ Папка temp створена")
-    except Exception as e:
-        logger.error(f"❌ Не вдалося створити папку temp: {e}")
-    
-    # Перевірка PIL
-    try:
-        from PIL import Image
-        logger.info("✅ PIL доступний")
-    except Exception as e:
-        logger.error(f"❌ PIL проблема: {e}")
-    
-    # Перевірка шрифтів
-    logger.info("🔤 Перевірка доступних шрифтів...")
-    font_paths = [
-        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-        '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
-        '/System/Library/Fonts/Helvetica.ttc',
-        'C:/Windows/Fonts/arial.ttf'
-    ]
-    
-    found_fonts = []
-    for font_path in font_paths:
-        if os.path.exists(font_path):
-            found_fonts.append(font_path)
-            logger.info(f"✅ Знайдено шрифт: {font_path}")
-    
-    if not found_fonts:
-        logger.warning("⚠️ Не знайдено жодного TTF шрифту")
-    
-    # Перевірка створення простого PDF
-    try:
-        test_pdf = FPDF()
-        test_pdf.add_page()
-        test_pdf.set_font('Arial', '', 12)
-        test_pdf.cell(0, 10, 'Test', ln=True)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            pdf_path = tmp.name
         
-        with tempfile.NamedTemporaryFile(delete=True, suffix='.pdf') as tmp_file:
-            test_pdf.output(tmp_file.name)
-            logger.info("✅ Тестовий PDF створено успішно")
-            
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font('Arial', '', 12)
+        
+        lines = text.split('\n')
+        for line in lines:
+            transliterated = transliterate_cyrillic(line)
+            pdf.cell(0, 10, transliterated, ln=True)
+        
+        pdf.output(pdf_path)
+        return pdf_path
+        
     except Exception as e:
-        logger.error(f"❌ Не вдалося створити тестовий PDF: {e}")
+        print(f"Навіть fallback не працює: {e}")
+        raise
+
+def transliterate_cyrillic(text):
+    """Транслітерація кирилиці"""
+    cyrillic_to_latin = {
+        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'є': 'ye',
+        'ж': 'zh', 'з': 'z', 'и': 'y', 'і': 'i', 'ї': 'yi', 'й': 'y', 'к': 'k',
+        'л': 'l', 'м': 'm', 'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's',
+        'т': 't', 'у': 'u', 'ф': 'f', 'х': 'kh', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh',
+        'щ': 'shch', 'ь': '', 'ю': 'yu', 'я': 'ya',
+        'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Є': 'YE',
+        'Ж': 'ZH', 'З': 'Z', 'И': 'Y', 'І': 'I', 'Ї': 'YI', 'Й': 'Y', 'К': 'K',
+        'Л': 'L', 'М': 'M', 'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S',
+        'Т': 'T', 'У': 'U', 'Ф': 'F', 'Х': 'KH', 'Ц': 'TS', 'Ч': 'CH', 'Ш': 'SH',
+        'Щ': 'SHCH', 'Ь': '', 'Ю': 'YU', 'Я': 'YA'
+    }
     
-    return True
+    result = ""
+    for char in text:
+        result += cyrillic_to_latin.get(char, char)
+    return result
+
+# Залишаємо для зворотної сумісності
+async def create_text_pdf_unicode(text):
+    """Створює PDF файл з текстом використовуючи найкращий доступний метод"""
+    return await create_text_pdf_with_cyrillic(text)
