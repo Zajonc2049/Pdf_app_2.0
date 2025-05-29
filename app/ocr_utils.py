@@ -18,6 +18,48 @@ WAAAAAAAIAAgACAAIAAGAAwAGwAsAEYAWgBnAHoAlwCkALcAzwDlAPoBDwEqAUMBXAF5AZYBrwHGAd0B
 +gIVAjICTwJs
 """
 
+def configure_tesseract_for_render():
+    """Налаштовує Tesseract для середовища Render"""
+    try:
+        # Перевіряємо наявність Tesseract
+        import subprocess
+        result = subprocess.run(['tesseract', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"✅ Tesseract знайдено: {result.stdout.split()[1] if len(result.stdout.split()) > 1 else 'невідома версія'}")
+            return True
+        else:
+            print("❌ Tesseract не знайдено")
+            return False
+    except Exception as e:
+        print(f"❌ Помилка перевірки Tesseract: {e}")
+        return False
+
+def check_render_environment():
+    """Перевіряє середовище Render"""
+    print("🔍 Перевірка середовища...")
+    
+    # Перевіряємо Tesseract
+    tesseract_ok = configure_tesseract_for_render()
+    
+    # Перевіряємо змінні середовища
+    tessdata = os.environ.get('TESSDATA_PREFIX', 'не встановлено')
+    print(f"TESSDATA_PREFIX: {tessdata}")
+    
+    # Перевіряємо доступні мови Tesseract
+    try:
+        languages = pytesseract.get_languages()
+        print(f"Доступні мови Tesseract: {languages}")
+        
+        if 'ukr' not in languages:
+            print("⚠️ УВАГА: Українська мова не знайдена!")
+        if 'eng' not in languages:
+            print("⚠️ УВАГА: Англійська мова не знайдена!")
+            
+    except Exception as e:
+        print(f"❌ Помилка перевірки мов: {e}")
+    
+    return tesseract_ok
+
 class CyrillicPDF(FPDF):
     """Розширений клас FPDF з підтримкою кирилиці"""
     
