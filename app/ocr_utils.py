@@ -18,6 +18,7 @@ class UTF8FPDF(FPDF):
     def __init__(self):
         super().__init__()
         self.font_loaded = False
+        self.current_font = None
     
     def load_unicode_font(self):
         """Завантажуємо шрифт з підтримкою кирилиці"""
@@ -36,23 +37,46 @@ class UTF8FPDF(FPDF):
             font_loaded = False
             for font_path in font_paths:
                 if os.path.exists(font_path):
-                    self.add_font('DejaVu', '', font_path, uni=True)
-                    self.set_font('DejaVu', '', 12)
-                    font_loaded = True
-                    logger.info(f"✅ Завантажено шрифт: {font_path}")
-                    break
+                    try:
+                        self.add_font('DejaVu', '', font_path, uni=True)
+                        self.set_font('DejaVu', '', 12)
+                        self.current_font = 'DejaVu'
+                        font_loaded = True
+                        logger.info(f"✅ Завантажено шрифт: {font_path}")
+                        break
+                    except Exception as e:
+                        logger.warning(f"⚠️ Не вдалося завантажити {font_path}: {e}")
+                        continue
             
             if not font_loaded:
                 # Якщо не знайшли шрифт, використовуємо стандартний
                 logger.warning("⚠️ Не знайдено Unicode шрифт, використовуємо стандартний")
-                self.set_font('Arial', '', 12)
+                try:
+                    self.set_font('Arial', '', 12)
+                    self.current_font = 'Arial'
+                except:
+                    # Якщо Arial недоступний, використовуємо будь-який доступний
+                    self.set_font('Helvetica', '', 12)
+                    self.current_font = 'Helvetica'
             
             self.font_loaded = True
             
         except Exception as e:
             logger.error(f"❌ Помилка завантаження шрифту: {e}")
-            self.set_font('Arial', '', 12)
+            try:
+                self.set_font('Helvetica', '', 12)
+                self.current_font = 'Helvetica'
+            except:
+                pass
             self.font_loaded = True
+
+    def set_font_size(self, size):
+        """Встановлює розмір шрифту"""
+        self.load_unicode_font()  # Переконуємося, що шрифт завантажено
+        if self.current_font:
+            self.set_font(self.current_font, '', size)
+        else:
+            super().set_font_size(size)
 
     def add_utf8_text(self, text):
         """Додає текст з підтримкою UTF-8"""
@@ -65,11 +89,13 @@ class UTF8FPDF(FPDF):
             # Перевіряємо, чи поміститься рядок на сторінці
             if self.get_y() > 250:  # Якщо близько до кінця сторінки
                 self.add_page()
+                self.load_unicode_font()  # Відновлюємо шрифт після нової сторінки
             
             try:
                 # Спробуємо додати рядок як є
                 self.cell(0, 10, line, ln=True)
-            except:
+            except Exception as e:
+                logger.warning(f"⚠️ Помилка з рядком '{line[:50]}...': {e}")
                 try:
                     # Якщо не вийшло, спробуємо закодувати
                     encoded_line = line.encode('latin1', 'ignore').decode('latin1')
@@ -107,6 +133,9 @@ async def create_text_pdf_with_cyrillic(text):
         pdf = UTF8FPDF()
         pdf.add_page()
         
+        # Завантажуємо шрифт спочатку
+        pdf.load_unicode_font()
+        
         # Додаємо заголовок
         pdf.set_font_size(16)
         pdf.cell(0, 10, 'Розпізнаний текст', ln=True, align='C')
@@ -126,7 +155,38 @@ async def create_text_pdf_with_cyrillic(text):
         
     except Exception as e:
         logger.error(f"❌ Помилка створення PDF: {e}")
-        raise
+        
+        # Якщо основний метод не спрацював, спробуємо простіший підхід
+        try:
+            logger.info("🔄 Спроба створення простого PDF...")
+            simple_pdf = FPDF()
+            simple_pdf.add_page()
+            simple_pdf.set_font('Arial', '', 12)
+            
+            # Конвертуємо кирилицю в латиницю для простого PDF
+            import unicodedata
+            ascii_text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
+            
+            simple_pdf.cell(0, 10, 'Recognized Text (ASCII)', ln=True)
+            simple_pdf.ln(5)
+            
+            lines = ascii_text.split('\n')
+            for line in lines:
+                if simple_pdf.get_y() > 250:
+                    simple_pdf.add_page()
+                    simple_pdf.set_font('Arial', '', 12)
+                simple_pdf.cell(0, 8, line[:80], ln=True)  # Обмежуємо довжину рядка
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                pdf_path = tmp_file.name
+                simple_pdf.output(pdf_path)
+            
+            logger.info(f"✅ Простий PDF створено: {pdf_path}")
+            return pdf_path
+            
+        except Exception as simple_error:
+            logger.error(f"❌ Помилка створення простого PDF: {simple_error}")
+            raise Exception(f"Не вдалося створити PDF: {str(e)} | Простий PDF: {str(simple_error)}")
 
 async def create_text_pdf(text):
     """Створює PDF з тексту (загальна функція)"""
@@ -322,5 +382,37 @@ def check_render_environment():
         logger.info("✅ PIL доступний")
     except Exception as e:
         logger.error(f"❌ PIL проблема: {e}")
+    
+    # Перевірка шрифтів
+    logger.info("🔤 Перевірка доступних шрифтів...")
+    font_paths = [
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+        '/System/Library/Fonts/Helvetica.ttc',
+        'C:/Windows/Fonts/arial.ttf'
+    ]
+    
+    found_fonts = []
+    for font_path in font_paths:
+        if os.path.exists(font_path):
+            found_fonts.append(font_path)
+            logger.info(f"✅ Знайдено шрифт: {font_path}")
+    
+    if not found_fonts:
+        logger.warning("⚠️ Не знайдено жодного TTF шрифту")
+    
+    # Перевірка створення простого PDF
+    try:
+        test_pdf = FPDF()
+        test_pdf.add_page()
+        test_pdf.set_font('Arial', '', 12)
+        test_pdf.cell(0, 10, 'Test', ln=True)
+        
+        with tempfile.NamedTemporaryFile(delete=True, suffix='.pdf') as tmp_file:
+            test_pdf.output(tmp_file.name)
+            logger.info("✅ Тестовий PDF створено успішно")
+            
+    except Exception as e:
+        logger.error(f"❌ Не вдалося створити тестовий PDF: {e}")
     
     return True
