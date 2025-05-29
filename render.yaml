@@ -3,47 +3,79 @@ services:
     name: pdf-service
     env: python
     region: oregon
-    plan: free
+    plan: free # Або інший план, якщо потрібно більше ресурсів
     buildCommand: |
-      # Update package lists
+      #!/usr/bin/env bash
+      echo "--- Starting Build Command ---"
+
+      # Оновлюємо список пакетів
       apt-get update -y
-      
-      # Install basic dependencies first
-      apt-get install -y wget curl software-properties-common
-      
-      # Install Tesseract OCR with language packs
-      apt-get install -y tesseract-ocr tesseract-ocr-ukr tesseract-ocr-eng tesseract-ocr-rus
-      
-      # Install fonts for better text rendering
-      apt-get install -y fonts-dejavu fonts-dejavu-core fonts-dejavu-extra
-      apt-get install -y fonts-liberation fonts-noto fonts-noto-core
-      apt-get install -y fontconfig
-      
-      # Install WeasyPrint system dependencies
-      apt-get install -y libpango-1.0-0 libharfbuzz0b libpangoft2-1.0-0
-      apt-get install -y libfontconfig1 libcairo2 libgdk-pixbuf2.0-0 
-      apt-get install -y libffi-dev shared-mime-info libxml2-dev libxslt1-dev
-      
-      # Additional libraries for image processing
-      apt-get install -y libjpeg-dev libpng-dev libtiff-dev
-      
-      # Clean up
+
+      # Встановлюємо всі необхідні системні залежності однією командою для надійності.
+      # Це включає:
+      # 1. Tesseract OCR та мовні пакети (українська, англійська, російська)
+      # 2. Шрифти для кращого рендерингу тексту в PDF (DejaVu, Noto)
+      # 3. Системні залежності для WeasyPrint (libpango, libharfbuzz, libcairo, etc.)
+      # 4. Додаткові бібліотеки для обробки зображень (libjpeg, libpng, libtiff), потрібні Pillow
+      apt-get install -y \
+        tesseract-ocr \
+        tesseract-ocr-ukr \
+        tesseract-ocr-eng \
+        tesseract-ocr-rus \
+        fonts-dejavu \
+        fonts-dejavu-core \
+        fonts-dejavu-extra \
+        fonts-liberation \
+        fonts-noto \
+        fonts-noto-core \
+        fontconfig \
+        libpango-1.0-0 \
+        libharfbuzz0b \
+        libpangoft2-1.0-0 \
+        libfontconfig1 \
+        libcairo2 \
+        libgdk-pixbuf2.0-0 \
+        libffi-dev \
+        shared-mime-info \
+        libxml2-dev \
+        libxslt1-dev \
+        libjpeg-dev \
+        libpng-dev \
+        libtiff-dev \
+        # Додаткові утиліти, які можуть бути корисними для налагодження, але не є критичними
+        # wget \
+        # curl \
+        # software-properties-common
+
+      # Очищаємо кеш apt, щоб зменшити розмір кінцевого образу
       apt-get clean
       rm -rf /var/lib/apt/lists/*
-      
-      # Verify Tesseract installation
-      tesseract --version
-      tesseract --list-langs
-      
-      # Install Python dependencies
+
+      # Перевіряємо встановлення Tesseract (для логів збірки)
+      # Це допоможе підтвердити, чи знайдено виконуваний файл tesseract у PATH під час збірки
+      echo "--- Verifying Tesseract Installation ---"
+      which tesseract || echo "ERROR: tesseract executable not found in PATH during build!"
+      tesseract --version || echo "ERROR: tesseract --version command failed!"
+      tesseract --list-langs || echo "ERROR: tesseract --list-langs command failed!"
+      echo "--- Tesseract Verification Complete ---"
+
+      # Встановлюємо Python залежності
+      echo "--- Installing Python Dependencies ---"
       pip install --upgrade pip setuptools wheel
       pip install -r requirements.txt
-      
+      echo "--- Python Dependencies Installed ---"
+
+      echo "--- Build Command Finished ---"
+
     startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1"
     envVars:
       - key: TESSDATA_PREFIX
+        # Важливо: Переконайтеся, що цей шлях відповідає версії Tesseract,
+        # яка встановлюється apt-get. Для Tesseract 5 це зазвичай /usr/share/tesseract-ocr/5/tessdata/
+        # Якщо apt-get встановлює Tesseract 4, то шлях буде /usr/share/tesseract-ocr/4.00/tessdata/
+        # Перевірте логи збірки після деплою, щоб підтвердити версію Tesseract.
         value: /usr/share/tesseract-ocr/5/tessdata/
-      - key: PYTHONPATH  
+      - key: PYTHONPATH
         value: /opt/render/project/src
       - key: DEBIAN_FRONTEND
         value: noninteractive
