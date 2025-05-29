@@ -1,14 +1,22 @@
+# render.yaml
+# Цей файл конфігурує ваш сервіс на Render.com
+
 services:
   - type: web
     name: pdf-service
     env: python
-    region: oregon
-    plan: free # Або інший план, якщо потрібно більше ресурсів
+    region: oregon # Регіон, де розгортається ваш сервіс
+    plan: free    # Використовуваний план (можна змінити на starter, standard, тощо)
+
+    # buildCommand: Ця секція виконується під час збірки вашого сервісу.
+    # Тут ми встановлюємо системні залежності (Tesseract, шрифти, бібліотеки для WeasyPrint)
+    # та Python-залежності.
     buildCommand: |
       #!/usr/bin/env bash
-      echo "--- Starting Build Command ---"
+      echo "--- Starting Build Command on Render ---"
 
-      # Оновлюємо список пакетів
+      # Оновлюємо список пакетів apt
+      echo "Updating apt package lists..."
       apt-get update -y
 
       # Встановлюємо всі необхідні системні залежності однією командою для надійності.
@@ -17,6 +25,7 @@ services:
       # 2. Шрифти для кращого рендерингу тексту в PDF (DejaVu, Noto)
       # 3. Системні залежності для WeasyPrint (libpango, libharfbuzz, libcairo, etc.)
       # 4. Додаткові бібліотеки для обробки зображень (libjpeg, libpng, libtiff), потрібні Pillow
+      echo "Installing system dependencies (Tesseract, fonts, WeasyPrint deps, image libs)..."
       apt-get install -y \
         tesseract-ocr \
         tesseract-ocr-ukr \
@@ -42,24 +51,28 @@ services:
         libjpeg-dev \
         libpng-dev \
         libtiff-dev \
-        # Додаткові утиліти, які можуть бути корисними для налагодження, але не є критичними
+        # Додаткові утиліти, які можуть бути корисними для налагодження, але не є критичними для роботи
         # wget \
         # curl \
         # software-properties-common
 
       # Очищаємо кеш apt, щоб зменшити розмір кінцевого образу
+      echo "Cleaning up apt cache..."
       apt-get clean
       rm -rf /var/lib/apt/lists/*
 
       # Перевіряємо встановлення Tesseract (для логів збірки)
       # Це допоможе підтвердити, чи знайдено виконуваний файл tesseract у PATH під час збірки
       echo "--- Verifying Tesseract Installation ---"
-      which tesseract || echo "ERROR: tesseract executable not found in PATH during build!"
+      # 'which' шукає виконуваний файл у PATH
+      which tesseract && echo "Tesseract executable found at: $(which tesseract)" || echo "ERROR: tesseract executable NOT found in PATH during build!"
+      # Перевіряємо версію Tesseract
       tesseract --version || echo "ERROR: tesseract --version command failed!"
+      # Перевіряємо список встановлених мовних пакетів
       tesseract --list-langs || echo "ERROR: tesseract --list-langs command failed!"
       echo "--- Tesseract Verification Complete ---"
 
-      # Встановлюємо Python залежності
+      # Встановлюємо Python залежності з requirements.txt
       echo "--- Installing Python Dependencies ---"
       pip install --upgrade pip setuptools wheel
       pip install -r requirements.txt
@@ -67,17 +80,22 @@ services:
 
       echo "--- Build Command Finished ---"
 
+    # startCommand: Команда, яка запускає ваш додаток після успішної збірки.
+    # Тут ми запускаємо FastAPI додаток за допомогою Uvicorn.
     startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1"
+
+    # envVars: Змінні середовища, доступні для вашого додатку під час виконання.
     envVars:
       - key: TESSDATA_PREFIX
         # Важливо: Переконайтеся, що цей шлях відповідає версії Tesseract,
         # яка встановлюється apt-get. Для Tesseract 5 це зазвичай /usr/share/tesseract-ocr/5/tessdata/
         # Якщо apt-get встановлює Tesseract 4, то шлях буде /usr/share/tesseract-ocr/4.00/tessdata/
-        # Перевірте логи збірки після деплою, щоб підтвердити версію Tesseract.
+        # Після першого успішного деплою з цим render.yaml, перевірте логи збірки,
+        # щоб побачити, яку версію Tesseract встановлено, і за потреби відкоригуйте цей шлях.
         value: /usr/share/tesseract-ocr/5/tessdata/
       - key: PYTHONPATH
-        value: /opt/render/project/src
+        value: /opt/render/project/src # Шлях до кореня вашого проекту на Render
       - key: DEBIAN_FRONTEND
-        value: noninteractive
+        value: noninteractive # Запобігає інтерактивним запитам під час встановлення пакетів
       - key: PORT
-        generateValue: true
+        generateValue: true # Render автоматично надасть значення для PORT
