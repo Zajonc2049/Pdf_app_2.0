@@ -12,6 +12,72 @@ import logging
 # Налаштування логування
 logger = logging.getLogger(__name__)
 
+class UTF8FPDF(FPDF):
+    """FPDF клас з підтримкою Unicode"""
+    
+    def __init__(self):
+        super().__init__()
+        self.font_loaded = False
+    
+    def load_unicode_font(self):
+        """Завантажуємо шрифт з підтримкою кирилиці"""
+        if self.font_loaded:
+            return
+            
+        try:
+            # Спробуємо завантажити шрифт DejaVu (є в більшості Linux систем)
+            font_paths = [
+                '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+                '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+                '/System/Library/Fonts/Helvetica.ttc',  # macOS
+                'C:/Windows/Fonts/arial.ttf'  # Windows
+            ]
+            
+            font_loaded = False
+            for font_path in font_paths:
+                if os.path.exists(font_path):
+                    self.add_font('DejaVu', '', font_path, uni=True)
+                    self.set_font('DejaVu', '', 12)
+                    font_loaded = True
+                    logger.info(f"✅ Завантажено шрифт: {font_path}")
+                    break
+            
+            if not font_loaded:
+                # Якщо не знайшли шрифт, використовуємо стандартний
+                logger.warning("⚠️ Не знайдено Unicode шрифт, використовуємо стандартний")
+                self.set_font('Arial', '', 12)
+            
+            self.font_loaded = True
+            
+        except Exception as e:
+            logger.error(f"❌ Помилка завантаження шрифту: {e}")
+            self.set_font('Arial', '', 12)
+            self.font_loaded = True
+
+    def add_utf8_text(self, text):
+        """Додає текст з підтримкою UTF-8"""
+        self.load_unicode_font()
+        
+        # Розбиваємо текст на рядки
+        lines = text.split('\n')
+        
+        for line in lines:
+            # Перевіряємо, чи поміститься рядок на сторінці
+            if self.get_y() > 250:  # Якщо близько до кінця сторінки
+                self.add_page()
+            
+            try:
+                # Спробуємо додати рядок як є
+                self.cell(0, 10, line, ln=True)
+            except:
+                try:
+                    # Якщо не вийшло, спробуємо закодувати
+                    encoded_line = line.encode('latin1', 'ignore').decode('latin1')
+                    self.cell(0, 10, encoded_line, ln=True)
+                except:
+                    # В крайньому випадку, пропускаємо рядок
+                    self.cell(0, 10, '[Text encoding error]', ln=True)
+
 # Конфігурація для Render
 def configure_tesseract_for_render():
     """Налаштовує Tesseract для роботи на Render"""
@@ -19,18 +85,52 @@ def configure_tesseract_for_render():
     possible_paths = [
         '/usr/bin/tesseract',  # Стандартний шлях на Linux
         '/usr/local/bin/tesseract',
-        '/opt/homebrew/bin/tesseract'
+        '/opt/homebrew/bin/tesseract',
+        'tesseract'  # Системний PATH
     ]
     
     for path in possible_paths:
-        if os.path.exists(path):
+        if path == 'tesseract' or os.path.exists(path):
             pytesseract.pytesseract.tesseract_cmd = path
             logger.info(f"Tesseract знайдено: {path}")
             return True
     
-    # Якщо не знайдено, використовуємо стандартну команду
-    logger.info("Використовуємо стандартну команду tesseract")
-    return True
+    logger.warning("⚠️ Tesseract не знайдено в стандартних місцях")
+    return False
+
+async def create_text_pdf_with_cyrillic(text):
+    """Створює PDF з тексту з підтримкою кирилиці"""
+    try:
+        logger.info("📄 Створення PDF з кирилицею...")
+        
+        # Створюємо PDF з Unicode підтримкою
+        pdf = UTF8FPDF()
+        pdf.add_page()
+        
+        # Додаємо заголовок
+        pdf.set_font_size(16)
+        pdf.cell(0, 10, 'Розпізнаний текст', ln=True, align='C')
+        pdf.ln(10)
+        
+        # Додаємо основний текст
+        pdf.set_font_size(12)
+        pdf.add_utf8_text(text)
+        
+        # Зберігаємо в тимчасовий файл
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+            pdf_path = tmp_file.name
+            pdf.output(pdf_path)
+        
+        logger.info(f"✅ PDF створено: {pdf_path}")
+        return pdf_path
+        
+    except Exception as e:
+        logger.error(f"❌ Помилка створення PDF: {e}")
+        raise
+
+async def create_text_pdf(text):
+    """Створює PDF з тексту (загальна функція)"""
+    return await create_text_pdf_with_cyrillic(text)
 
 async def process_image_to_pdf(image_path):
     """Обробляє зображення та створює PDF з розпізнаним текстом (оптимізовано для Render)"""
@@ -80,7 +180,7 @@ async def process_image_to_pdf(image_path):
             version = pytesseract.get_tesseract_version()
             logger.info(f"✅ Tesseract версія: {version}")
         except Exception as e:
-            logger.error(f"❌ Проблема з Tesseract: {e}")
+            logger.warning(f"⚠️ Проблема з Tesseract: {e}")
             # Спробуємо встановити змінну середовища
             os.environ['TESSDATA_PREFIX'] = '/usr/share/tesseract-ocr/5/tessdata/'
         
@@ -89,6 +189,7 @@ async def process_image_to_pdf(image_path):
         ocr_configs = [
             {'lang': 'ukr+eng', 'config': '--psm 6 -c preserve_interword_spaces=1'},
             {'lang': 'ukr+eng', 'config': '--psm 3'},
+            {'lang': 'ukr', 'config': '--psm 6'},
             {'lang': 'eng', 'config': '--psm 6'},
             {'lang': 'eng', 'config': '--psm 3'},
             {'lang': '', 'config': '--psm 6'}  # Без мови
@@ -100,20 +201,22 @@ async def process_image_to_pdf(image_path):
             try:
                 logger.info(f"🔍 OCR спроба {i+1}: lang='{ocr_config['lang']}', config='{ocr_config['config']}'")
                 
-                if ocr_config['lang']:
-                    text = pytesseract.image_to_string(
-                        Image.open(image_path),
-                        lang=ocr_config['lang'],
-                        config=ocr_config['config']
-                    )
-                else:
-                    text = pytesseract.image_to_string(
-                        Image.open(image_path),
-                        config=ocr_config['config']
-                    )
+                with Image.open(image_path) as ocr_img:
+                    if ocr_config['lang']:
+                        text = pytesseract.image_to_string(
+                            ocr_img,
+                            lang=ocr_config['lang'],
+                            config=ocr_config['config']
+                        )
+                    else:
+                        text = pytesseract.image_to_string(
+                            ocr_img,
+                            config=ocr_config['config']
+                        )
                 
                 if text.strip():
-                    logger.info(f"✅ OCR успішно: {len(text)} символів, перші 100: {text[:100]}")
+                    logger.info(f"✅ OCR успішно: {len(text)} символів")
+                    logger.info(f"📝 Перші 100 символів: {text[:100]}")
                     break
                 else:
                     logger.warning(f"⚠️ OCR повернув порожній результат")
@@ -148,10 +251,13 @@ async def process_image_to_pdf(image_path):
         logger.info(f"✅ PDF успішно створено: {pdf_path}")
         
         # Очищення тимчасових файлів
-        cleanup_files = [image_path, image_path + "_opt.jpg"]
+        cleanup_files = [image_path]
+        if image_path.endswith("_opt.jpg"):
+            cleanup_files.append(image_path.replace("_opt.jpg", ""))
+        
         for file_path in cleanup_files:
             try:
-                if os.path.exists(file_path):
+                if os.path.exists(file_path) and file_path != pdf_path:
                     os.unlink(file_path)
                     logger.info(f"🗑️ Видалено: {file_path}")
             except Exception as e:
@@ -163,7 +269,10 @@ async def process_image_to_pdf(image_path):
         logger.error(f"❌ Критична помилка обробки зображення: {e}")
         
         # Очищення у разі помилки
-        cleanup_files = [image_path, image_path + "_opt.jpg"]
+        cleanup_files = [image_path]
+        if image_path.endswith("_opt.jpg"):
+            cleanup_files.append(image_path.replace("_opt.jpg", ""))
+            
         for file_path in cleanup_files:
             try:
                 if os.path.exists(file_path):
@@ -180,21 +289,38 @@ def check_render_environment():
     
     # Перевірка Tesseract
     try:
+        configure_tesseract_for_render()
         version = pytesseract.get_tesseract_version()
         logger.info(f"✅ Tesseract: {version}")
-    except:
-        logger.error("❌ Tesseract не знайдено")
+    except Exception as e:
+        logger.error(f"❌ Tesseract проблема: {e}")
     
     # Перевірка мов
     try:
         langs = pytesseract.get_languages()
-        logger.info(f"✅ Мови: {langs}")
-    except:
-        logger.error("❌ Не вдалося отримати список мов")
+        logger.info(f"✅ Доступні мови: {langs}")
+        
+        # Перевіряємо наявність української мови
+        if 'ukr' in langs:
+            logger.info("✅ Українська мова доступна")
+        else:
+            logger.warning("⚠️ Українська мова недоступна")
+            
+    except Exception as e:
+        logger.error(f"❌ Не вдалося отримати список мов: {e}")
     
     # Перевірка папок
-    os.makedirs("temp", exist_ok=True)
-    os.makedirs("fonts", exist_ok=True)
-    logger.info("✅ Папки створено")
+    try:
+        os.makedirs("temp", exist_ok=True)
+        logger.info("✅ Папка temp створена")
+    except Exception as e:
+        logger.error(f"❌ Не вдалося створити папку temp: {e}")
+    
+    # Перевірка PIL
+    try:
+        from PIL import Image
+        logger.info("✅ PIL доступний")
+    except Exception as e:
+        logger.error(f"❌ PIL проблема: {e}")
     
     return True
