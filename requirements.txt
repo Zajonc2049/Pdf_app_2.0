@@ -1,10 +1,26 @@
+# Core FastAPI dependencies
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 jinja2==3.1.2
 aiofiles==23.2.1
+
+# PDF generation libraries
 fpdf2==2.7.6
-Pillow==10.1.0
-pytesseract==0.3.10
 reportlab==4.0.8
 weasyprint==61.2
+
+# Image processing and OCR
+Pillow==10.1.0
+pytesseract==0.3.10
+
+# Additional dependencies for WeasyPrint
+cffi>=1.15.0
+pycparser>=2.21
+cairocffi>=1.4.0
+tinycss2>=1.2.0
+cssselect2>=0.7.0
+html5lib>=1.1
+
+# For better error handling and logging
+loguru==0.7.2
