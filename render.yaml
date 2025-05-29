@@ -3,14 +3,22 @@ services:
     name: pdf-service
     env: python
     buildCommand: |
-      # Встановлюємо системні залежності
+      # Оновлюємо пакети
       apt-get update
+      
+      # Встановлюємо системні залежності
       apt-get install -y tesseract-ocr tesseract-ocr-ukr tesseract-ocr-eng
-      apt-get install -y fonts-dejavu fonts-liberation
+      apt-get install -y fonts-dejavu fonts-liberation fonts-noto
+      
+      # Додаткові залежності для WeasyPrint
+      apt-get install -y libpango-1.0-0 libharfbuzz0b libpangoft2-1.0-0
+      apt-get install -y libfontconfig1 libcairo2 libgdk-pixbuf2.0-0 libffi-dev shared-mime-info
       
       # Встановлюємо Python залежності
+      pip install --upgrade pip
       pip install -r requirements.txt
-    startCommand: python -m app.main
+      
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     plan: free
     envVars:
       - key: TESSDATA_PREFIX
