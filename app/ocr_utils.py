@@ -17,13 +17,28 @@ def configure_tesseract_for_render():
     """Configure Tesseract for Render environment with comprehensive checks"""
     logger.info("🔍 Configuring Tesseract...")
     
-    # First, try to find tesseract executable
+    # 1. Спробуйте знайти tesseract за стандартними шляхами
     tesseract_paths = [
         '/usr/bin/tesseract',
         '/usr/local/bin/tesseract',
-        shutil.which('tesseract')
+        shutil.which('tesseract') # Шукає в PATH
     ]
     
+    # 2. Перевірте, чи встановлено TESSDATA_PREFIX як змінну середовища
+    # Це може вказувати на шлях до tesseract, якщо він не в PATH
+    tessdata_prefix_env = os.environ.get('TESSDATA_PREFIX')
+    if tessdata_prefix_env:
+        # Якщо TESSDATA_PREFIX встановлено, спробуйте знайти tesseract поруч
+        # або припустити, що він у стандартному системному шляху
+        logger.info(f"Using TESSDATA_PREFIX from environment: {tessdata_prefix_env}")
+        # Додаємо потенційний шлях до tesseract, якщо він не в PATH
+        # Зазвичай tesseract знаходиться в /usr/bin, який має бути в PATH
+        # Але якщо ні, то це може допомогти.
+        # Однак, якщо tesseract не в PATH, це системна проблема, а не pytesseract
+        # Тому ми покладаємося на shutil.which('tesseract')
+    else:
+        logger.warning("⚠️ TESSDATA_PREFIX environment variable not set.")
+
     tesseract_cmd = None
     for path in tesseract_paths:
         if path and os.path.exists(path):
@@ -32,16 +47,16 @@ def configure_tesseract_for_render():
             break
     
     if not tesseract_cmd:
-        logger.error("❌ Tesseract executable not found!")
+        logger.error("❌ Tesseract executable not found! Please ensure it's installed and in PATH.")
         return False
     
-    # Set the tesseract command path
+    # Встановлюємо шлях до виконуваного файлу tesseract для pytesseract
     pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
     
-    # Test tesseract installation
+    # Тестуємо встановлення tesseract
     try:
         result = subprocess.run([tesseract_cmd, '--version'], 
-                              capture_output=True, text=True, timeout=10)
+                                 capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             version_info = result.stdout.strip()
             logger.info(f"✅ Tesseract version: {version_info.split()[1] if len(version_info.split()) > 1 else 'unknown'}")
@@ -55,17 +70,17 @@ def configure_tesseract_for_render():
         logger.error(f"❌ Error checking Tesseract version: {e}")
         return False
     
-    # Check available languages
+    # Перевіряємо доступні мови
     try:
         languages = pytesseract.get_languages(config='')
         logger.info(f"📝 Available Tesseract languages: {languages}")
         
-        required_langs = ['eng', 'ukr']
+        required_langs = ['eng', 'ukr', 'rus'] # Додаємо 'rus'
         missing_langs = [lang for lang in required_langs if lang not in languages]
         
         if missing_langs:
-            logger.warning(f"⚠️ Missing languages: {missing_langs}")
-            # Try to continue with available languages
+            logger.warning(f"⚠️ Missing languages: {missing_langs}. OCR accuracy may be affected.")
+            # Спробуйте продовжити з доступними мовами
         else:
             logger.info("✅ All required languages available")
             
@@ -73,20 +88,17 @@ def configure_tesseract_for_render():
         logger.error(f"❌ Error checking languages: {e}")
         return False
     
-    # Test OCR with a simple image
+    # Тестуємо OCR з простим зображенням
     try:
-        # Create a simple test image
         test_img = Image.new('RGB', (200, 50), color='white')
         
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_img:
             test_img.save(tmp_img.name)
             
-            # Try OCR
-            test_text = pytesseract.image_to_string(test_img, lang='eng')
-            logger.info("✅ Tesseract OCR test successful")
+            test_text = pytesseract.image_to_string(tmp_img.name, lang='eng') # Використовуємо шлях до файлу
+            logger.info(f"✅ Tesseract OCR test successful. Recognized text (first 20 chars): '{test_text[:20]}'")
             
-            # Clean up
-            os.unlink(tmp_img.name)
+            os.unlink(tmp_img.name) # Clean up
             
     except Exception as e:
         logger.error(f"❌ Tesseract OCR test failed: {e}")
@@ -98,23 +110,19 @@ def check_render_environment():
     """Check Render environment setup"""
     logger.info("🔍 Checking Render environment...")
     
-    # Check environment variables
     tessdata = os.environ.get('TESSDATA_PREFIX', 'not set')
     logger.info(f"TESSDATA_PREFIX: {tessdata}")
     
-    # Check if tessdata directory exists
     if tessdata != 'not set' and os.path.exists(tessdata):
         logger.info(f"✅ TESSDATA directory exists: {tessdata}")
-        # List available language files
         try:
             lang_files = [f for f in os.listdir(tessdata) if f.endswith('.traineddata')]
-            logger.info(f"📚 Available language files: {lang_files}")
+            logger.info(f"📚 Available language files in TESSDATA_PREFIX: {lang_files}")
         except Exception as e:
             logger.warning(f"⚠️ Could not list tessdata files: {e}")
     else:
-        logger.warning(f"⚠️ TESSDATA directory not found: {tessdata}")
+        logger.warning(f"⚠️ TESSDATA directory not found or TESSDATA_PREFIX not set correctly: {tessdata}")
     
-    # Test system commands
     commands_to_test = ['tesseract', 'convert', 'python3']
     for cmd in commands_to_test:
         cmd_path = shutil.which(cmd)
@@ -123,7 +131,6 @@ def check_render_environment():
         else:
             logger.warning(f"⚠️ {cmd} not found in PATH")
     
-    # Configure and test Tesseract
     tesseract_ok = configure_tesseract_for_render()
     
     if tesseract_ok:
@@ -147,37 +154,39 @@ class CyrillicPDF(FPDF):
             return self.cyrillic_supported
             
         try:
-            # Create fonts directory
             font_dir = Path("fonts")
             font_dir.mkdir(exist_ok=True)
             font_path = font_dir / "DejaVuSans.ttf"
             
-            # Try to download font if not exists
-            if not font_path.exists():
+            if not font_path.exists() or font_path.stat().st_size < 100000: # Перевірка розміру файлу
                 logger.info("📥 Downloading DejaVu Sans font...")
-                try:
-                    font_urls = [
-                        "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf",
-                        "https://github.com/google/fonts/raw/main/apache/opensans/OpenSans-Regular.ttf"
-                    ]
-                    
-                    for url in font_urls:
-                        try:
-                            logger.info(f"Trying to download from {url[:50]}...")
-                            urllib.request.urlretrieve(url, font_path)
-                            if font_path.exists() and font_path.stat().st_size > 100000:
-                                logger.info("✅ Font downloaded successfully!")
-                                break
-                        except Exception as e:
-                            logger.warning(f"Failed to download from {url[:30]}: {e}")
-                            continue
-                except Exception as e:
-                    logger.error(f"Font download error: {e}")
-            
-            # Check if font was downloaded successfully
+                font_urls = [
+                    "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf",
+                    "https://github.com/google/fonts/raw/main/apache/opensans/OpenSans-Regular.ttf",
+                    "https://www.fontsquirrel.com/fonts/download/dejavu-sans" # Додаткове джерело
+                ]
+                
+                downloaded = False
+                for url in font_urls:
+                    try:
+                        logger.info(f"Trying to download from {url[:50]}...")
+                        urllib.request.urlretrieve(url, font_path)
+                        if font_path.exists() and font_path.stat().st_size > 100000:
+                            logger.info("✅ Font downloaded successfully!")
+                            downloaded = True
+                            break
+                    except Exception as e:
+                        logger.warning(f"Failed to download from {url[:30]}: {e}")
+                        continue
+                
+                if not downloaded:
+                    logger.error("❌ Failed to download any font. Cyrillic support may be limited.")
+                    self.font_loaded = True
+                    self.cyrillic_supported = False
+                    return False
+
             if font_path.exists() and font_path.stat().st_size > 100000:
                 try:
-                    # Add font to FPDF
                     self.add_font('DejaVu', '', str(font_path), uni=True)
                     self.set_font('DejaVu', '', 12)
                     self.font_loaded = True
@@ -185,16 +194,15 @@ class CyrillicPDF(FPDF):
                     logger.info("✅ DejaVu Sans font configured successfully!")
                     return True
                 except Exception as e:
-                    logger.error(f"Font configuration error: {e}")
+                    logger.error(f"Font configuration error with FPDF: {e}")
             
-            # Fallback
-            logger.warning("⚠️ Using fallback font method...")
+            logger.warning("⚠️ Using fallback font method for FPDF...")
             self.font_loaded = True
             self.cyrillic_supported = False
             return False
             
         except Exception as e:
-            logger.error(f"General font loading error: {e}")
+            logger.error(f"General font loading error for FPDF: {e}")
             self.font_loaded = True
             self.cyrillic_supported = False
             return False
@@ -204,16 +212,13 @@ async def process_image_to_pdf(image_path):
     logger.info(f"🖼️ Processing image: {image_path}")
     
     try:
-        # Verify image exists and is readable
         if not os.path.exists(image_path):
             raise Exception(f"Image file not found: {image_path}")
         
-        # Open and verify image
         try:
             img = Image.open(image_path)
             logger.info(f"📐 Image size: {img.size}, mode: {img.mode}")
             
-            # Convert to RGB if necessary
             if img.mode != 'RGB':
                 img = img.convert('RGB')
                 logger.info("🔄 Converted image to RGB")
@@ -221,40 +226,40 @@ async def process_image_to_pdf(image_path):
         except Exception as e:
             raise Exception(f"Cannot open image file: {e}")
         
-        # Perform OCR with better error handling
         try:
-            # Try with Ukrainian and English
-            logger.info("🔍 Starting OCR with ukr+eng languages...")
-            text = pytesseract.image_to_string(img, lang='ukr+eng', config='--psm 3')
+            logger.info("🔍 Starting OCR with ukr+eng+rus languages...")
+            # Використовуємо config='--psm 3' для розпізнавання тексту на сторінці
+            text = pytesseract.image_to_string(img, lang='ukr+eng+rus', config='--psm 3')
             
             if not text.strip():
-                # Fallback to English only
-                logger.info("🔍 Fallback to English only OCR...")
+                logger.info("🔍 OCR with ukr+eng+rus yielded no text. Trying fallback to eng only...")
                 text = pytesseract.image_to_string(img, lang='eng', config='--psm 3')
                 
             if not text.strip():
-                # Try different PSM modes
-                logger.info("🔍 Trying different OCR modes...")
-                for psm in [6, 7, 8, 13]:
+                logger.info("🔍 OCR with eng only yielded no text. Trying different PSM modes for eng...")
+                for psm in [6, 7, 8, 13]: # Спробуємо різні режими PSM
                     try:
-                        text = pytesseract.image_to_string(img, lang='eng', config=f'--psm {psm}')
-                        if text.strip():
+                        temp_text = pytesseract.image_to_string(img, lang='eng', config=f'--psm {psm}')
+                        if temp_text.strip():
+                            text = temp_text
+                            logger.info(f"✅ Found text with PSM {psm}.")
                             break
-                    except:
+                    except Exception as psm_e:
+                        logger.warning(f"OCR with PSM {psm} failed: {psm_e}")
                         continue
                         
             logger.info(f"📝 OCR result length: {len(text)} characters")
             logger.info(f"📝 First 100 chars: {text[:100]}...")
             
+        except pytesseract.TesseractNotFoundError as e:
+            logger.error(f"Tesseract executable not found during OCR: {e}. Ensure Tesseract is installed and in PATH.")
+            text = f"OCR Error: Tesseract not found. Please ensure it's installed and configured correctly."
         except Exception as e:
-            logger.error(f"OCR failed: {e}")
-            # Create a PDF with error message
-            text = f"OCR Error: {str(e)}\nPlease check if the image contains readable text."
+            logger.error(f"OCR failed: {e}", exc_info=True)
+            text = f"OCR Error: {str(e)}\nPlease check if the image contains readable text or if Tesseract is configured."
         
-        # Create PDF with recognized text
         pdf_path = await create_text_pdf_with_cyrillic(text)
         
-        # Clean up temporary image
         try:
             os.unlink(image_path)
             logger.info("🗑️ Temporary image cleaned up")
@@ -264,7 +269,7 @@ async def process_image_to_pdf(image_path):
         return pdf_path
         
     except Exception as e:
-        logger.error(f"❌ Image processing failed: {e}")
+        logger.error(f"❌ Image processing failed: {e}", exc_info=True)
         raise
 
 async def create_text_pdf(text):
@@ -310,7 +315,6 @@ async def create_pdf_weasyprint(text):
         
         logger.info("🔥 Using WeasyPrint (best Unicode method)...")
         
-        # Create HTML with proper encoding
         html_content = f"""
         <!DOCTYPE html>
         <html lang="uk">
@@ -343,11 +347,9 @@ async def create_pdf_weasyprint(text):
             </div>
         """
         
-        # Add text by paragraphs
         lines = text.split('\n')
         for line in lines:
             if line.strip():
-                # Escape HTML special characters
                 escaped_line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
                 html_content += f"<p>{escaped_line}</p>\n"
             else:
@@ -355,7 +357,6 @@ async def create_pdf_weasyprint(text):
         
         html_content += "</body></html>"
         
-        # Create PDF
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             pdf_path = tmp.name
         
@@ -364,7 +365,7 @@ async def create_pdf_weasyprint(text):
         return pdf_path
         
     except ImportError:
-        raise Exception("WeasyPrint not installed")
+        raise Exception("WeasyPrint not installed. Please add it to requirements.txt and ensure system dependencies are met.")
     except Exception as e:
         raise Exception(f"WeasyPrint error: {e}")
 
@@ -382,20 +383,19 @@ async def create_text_pdf_reportlab_advanced(text):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             pdf_path = tmp.name
         
-        # Font attempts
         font_attempts = [
             {
                 'name': 'DejaVuSans',
                 'url': 'https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf'
             },
             {
-                'name': 'NotoSans', 
+                'name': 'NotoSans',  
                 'url': 'https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf'
             }
         ]
         
         font_loaded = False
-        active_font = 'DejaVuSans'
+        active_font = 'Helvetica' # Fallback to Helvetica
         
         for font_info in font_attempts:
             try:
@@ -403,36 +403,34 @@ async def create_text_pdf_reportlab_advanced(text):
                 font_dir.mkdir(exist_ok=True)
                 font_path = font_dir / f"{font_info['name']}.ttf"
                 
-                if not font_path.exists():
-                    logger.info(f"Downloading {font_info['name']}...")
+                if not font_path.exists() or font_path.stat().st_size < 50000:
+                    logger.info(f"Downloading {font_info['name']} for ReportLab...")
                     urllib.request.urlretrieve(font_info['url'], font_path)
                 
                 if font_path.exists() and font_path.stat().st_size > 50000:
                     pdfmetrics.registerFont(TTFont(font_info['name'], str(font_path)))
                     active_font = font_info['name']
                     font_loaded = True
-                    logger.info(f"✅ Font {font_info['name']} loaded!")
+                    logger.info(f"✅ Font {font_info['name']} loaded for ReportLab!")
                     break
                     
             except Exception as e:
-                logger.warning(f"Error with {font_info['name']}: {e}")
+                logger.warning(f"Error with {font_info['name']} for ReportLab: {e}")
                 continue
         
         if not font_loaded:
-            raise Exception("Could not load any Unicode font")
-        
-        # Create PDF
+            logger.warning("Could not load any Unicode font for ReportLab. Using Helvetica (limited Unicode).")
+            # raise Exception("Could not load any Unicode font for ReportLab") # Don't raise, just warn and use fallback
+            
         c = canvas.Canvas(pdf_path, pagesize=A4)
         width, height = A4
         c.setFont(active_font, 12)
         
-        # Text settings
         margin = 72  # 1 inch
         line_height = 16
         max_width = width - 2 * margin
         y_position = height - margin
         
-        # Add title
         c.setFont(active_font, 16)
         c.drawString(margin, y_position, "OCR Result")
         y_position -= 30
@@ -447,7 +445,6 @@ async def create_text_pdf_reportlab_advanced(text):
                 y_position = height - margin
             
             if line.strip():
-                # Split long lines
                 wrapped_lines = simpleSplit(line, active_font, 12, max_width)
                 for wrapped_line in wrapped_lines:
                     if y_position < margin + 50:
@@ -465,7 +462,7 @@ async def create_text_pdf_reportlab_advanced(text):
         return pdf_path
         
     except ImportError:
-        raise Exception("ReportLab not installed")
+        raise Exception("ReportLab not installed. Please add it to requirements.txt.")
     except Exception as e:
         raise Exception(f"ReportLab advanced error: {e}")
 
@@ -494,7 +491,6 @@ async def create_text_pdf_reportlab_simple(text):
                 c.setFont("Helvetica", 12)
                 y_position = height - 50
             
-            # Try to output line, fallback to ASCII if needed
             try:
                 c.drawString(50, y_position, line)
             except:
@@ -522,8 +518,11 @@ async def create_text_pdf_fpdf_unicode(text):
         cyrillic_loaded = pdf.load_cyrillic_font()
         
         if not cyrillic_loaded:
-            raise Exception("Could not load Unicode font for FPDF")
-        
+            # Не піднімаємо виняток, якщо шрифт не завантажився,
+            # дозволяючи системі спробувати інші методи
+            logger.warning("FPDF Unicode font could not be loaded. Trying other PDF methods.")
+            raise Exception("FPDF Unicode font not available.")
+            
         pdf.add_page()
         
         lines = text.split('\n')
@@ -531,7 +530,7 @@ async def create_text_pdf_fpdf_unicode(text):
             if pdf.get_y() + 10 > 280:
                 pdf.add_page()
                 pdf.set_font('DejaVu', '', 12)
-            
+                
             pdf.cell(0, 8, line, ln=True)
         
         pdf.output(pdf_path)
@@ -553,7 +552,6 @@ async def create_text_pdf_basic_fallback(text):
         pdf.add_page()
         pdf.set_font('Arial', '', 12)
         
-        # Add warning
         pdf.cell(0, 10, "WARNING: Cyrillic text has been transliterated", ln=True)
         pdf.ln(5)
         
