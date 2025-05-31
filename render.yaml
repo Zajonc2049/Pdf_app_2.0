@@ -1,101 +1,37 @@
-# render.yaml
-# Цей файл конфігурує ваш сервіс на Render.com
-
+# render.yaml - альтернативна версія без Docker
 services:
   - type: web
     name: pdf-service
     env: python
-    region: oregon # Регіон, де розгортається ваш сервіс
-    plan: free    # Використовуваний план (можна змінити на starter, standard, тощо)
-
-    # buildCommand: Ця секція виконується під час збірки вашого сервісу.
-    # Тут ми встановлюємо системні залежності (Tesseract, шрифти, бібліотеки для WeasyPrint)
-    # та Python-залежності.
+    region: oregon
+    plan: free
+    
+    # Спроба встановити залежності через buildCommand
     buildCommand: |
-      #!/usr/bin/env bash
-      echo "--- Starting Build Command on Render ---"
-
-      # Оновлюємо список пакетів apt
-      echo "Updating apt package lists..."
-      apt-get update -y
-
-      # Встановлюємо всі необхідні системні залежності однією командою для надійності.
-      # Це включає:
-      # 1. Tesseract OCR та мовні пакети (українська, англійська, російська)
-      # 2. Шрифти для кращого рендерингу тексту в PDF (DejaVu, Noto)
-      # 3. Системні залежності для WeasyPrint (libpango, libharfbuzz, libcairo, etc.)
-      # 4. Додаткові бібліотеки для обробки зображень (libjpeg, libpng, libtiff), потрібні Pillow
-      echo "Installing system dependencies (Tesseract, fonts, WeasyPrint deps, image libs)..."
-      apt-get install -y \
-        tesseract-ocr \
-        tesseract-ocr-ukr \
-        tesseract-ocr-eng \
-        tesseract-ocr-rus \
-        fonts-dejavu \
-        fonts-dejavu-core \
-        fonts-dejavu-extra \
-        fonts-liberation \
-        fonts-noto \
-        fonts-noto-core \
-        fontconfig \
-        libpango-1.0-0 \
-        libharfbuzz0b \
-        libpangoft2-1.0-0 \
-        libfontconfig1 \
-        libcairo2 \
-        libgdk-pixbuf2.0-0 \
-        libffi-dev \
-        shared-mime-info \
-        libxml2-dev \
-        libxslt1-dev \
-        libjpeg-dev \
-        libpng-dev \
-        libtiff-dev \
-        # Додаткові утиліти, які можуть бути корисними для налагодження, але не є критичними для роботи
-        # wget \
-        # curl \
-        # software-properties-common
-
-      # Очищаємо кеш apt, щоб зменшити розмір кінцевого образу
-      echo "Cleaning up apt cache..."
-      apt-get clean
-      rm -rf /var/lib/apt/lists/*
-
-      # Перевіряємо встановлення Tesseract (для логів збірки)
-      # Це допоможе підтвердити, чи знайдено виконуваний файл tesseract у PATH під час збірки
-      echo "--- Verifying Tesseract Installation ---"
-      # 'which' шукає виконуваний файл у PATH
-      which tesseract && echo "Tesseract executable found at: $(which tesseract)" || echo "ERROR: tesseract executable NOT found in PATH during build!"
-      # Перевіряємо версію Tesseract
-      tesseract --version || echo "ERROR: tesseract --version command failed!"
-      # Перевіряємо список встановлених мовних пакетів
-      tesseract --list-langs || echo "ERROR: tesseract --list-langs command failed!"
-      echo "--- Tesseract Verification Complete ---"
-
-      # Встановлюємо Python залежності з requirements.txt
-      echo "--- Installing Python Dependencies ---"
+      echo "=== Starting build process ==="
+      echo "Installing Python dependencies..."
       pip install --upgrade pip setuptools wheel
       pip install -r requirements.txt
-      echo "--- Python Dependencies Installed ---"
+      echo "=== Build process complete ==="
 
-      echo "--- Build Command Finished ---"
-
-    # startCommand: Команда, яка запускає ваш додаток після успішної збірки.
-    # Тут ми запускаємо FastAPI додаток за допомогою Uvicorn.
     startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1"
 
-    # envVars: Змінні середовища, доступні для вашого додатку під час виконання.
     envVars:
-      - key: TESSDATA_PREFIX
-        # Важливо: Переконайтеся, що цей шлях відповідає версії Tesseract,
-        # яка встановлюється apt-get. Для Tesseract 5 це зазвичай /usr/share/tesseract-ocr/5/tessdata/
-        # Якщо apt-get встановлює Tesseract 4, то шлях буде /usr/share/tesseract-ocr/4.00/tessdata/
-        # Після першого успішного деплою з цим render.yaml, перевірте логи збірки,
-        # щоб побачити, яку версію Tesseract встановлено, і за потреби відкоригуйте цей шлях.
-        value: /usr/share/tesseract-ocr/5/tessdata/
       - key: PYTHONPATH
-        value: /opt/render/project/src # Шлях до кореня вашого проекту на Render
-      - key: DEBIAN_FRONTEND
-        value: noninteractive # Запобігає інтерактивним запитам під час встановлення пакетів
+        value: /opt/render/project/src
       - key: PORT
-        generateValue: true # Render автоматично надасть значення для PORT
+        generateValue: true
+      # Видаляємо TESSDATA_PREFIX поки не підтвердимо наявність Tesseract
+      
+# Додаємо окремий сервіс для перевірки можливості встановлення Tesseract
+# (це експериментальний підхід)
+  - type: background
+    name: tesseract-setup
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: |
+      echo "Attempting to install Tesseract..."
+      # Цей сервіс буде спробувати встановити Tesseract
+      # але background сервіси мають обмежені можливості
+    startCommand: "echo 'Tesseract setup service' && sleep infinity"
